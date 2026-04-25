@@ -5,11 +5,12 @@ import asyncio
 import logging
 import threading
 import shutil
+import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, ContextTypes
+    CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
 logging.basicConfig(
@@ -19,33 +20,46 @@ logging.basicConfig(
 active_processes = {}
 
 # ================================
-# ADVANCED ANTI-DUPLICATE SYSTEM (Fixes Double Reply completely)
+# 🛡️ ULTIMATE ANTI-DUPLICATE MIDDLEWARE 🛡️
 # ================================
-processed_updates =[]
-processed_messages =[]
+DB_PATH = os.path.abspath("bot_lock.db")
 
-def is_duplicate(update: Update) -> bool:
-    if not update: return False
-    
-    # 1. Update ID check
-    uid = update.update_id
-    if uid in processed_updates:
-        return True
-    if uid:
-        processed_updates.append(uid)
-        if len(processed_updates) > 2000:
-            processed_updates.pop(0)
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS processed (id TEXT PRIMARY KEY)')
+    conn.commit()
+    conn.close()
 
-    # 2. Message ID check (Extra layer of security for Double Replies)
+init_db()
+
+async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update: 
+        return
+        
+    keys =[]
+    if update.update_id:
+        keys.append(f"uid_{update.update_id}")
     if update.message:
-        msg_key = f"{update.message.chat_id}_{update.message.message_id}"
-        if msg_key in processed_messages:
-            return True
-        processed_messages.append(msg_key)
-        if len(processed_messages) > 2000:
-            processed_messages.pop(0)
-            
-    return False
+        keys.append(f"msg_{update.message.chat_id}_{update.message.message_id}")
+        
+    if not keys: return
+
+    conn = sqlite3.connect(DB_PATH, timeout=5)
+    c = conn.cursor()
+    try:
+        for key in keys:
+            try:
+                c.execute("INSERT INTO processed (id) VALUES (?)", (key,))
+            except sqlite3.IntegrityError:
+                raise ApplicationHandlerStop()
+        conn.commit()
+    except ApplicationHandlerStop:
+        raise 
+    except Exception as e:
+        logging.error(f"DB Middleware Error: {e}")
+    finally:
+        conn.close()
 
 # Global Lock for Queue System
 global_task_lock = asyncio.Lock()
@@ -131,7 +145,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         font_path = os.path.join("fonts", font_file)
         ext = os.path.splitext(font_file)[1].lower()
         mimetype = ""
-        if ext in ['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
+        if ext in['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
         elif ext == '.otf': mimetype = "application/vnd.ms-opentype"
             
         if mimetype:
@@ -145,7 +159,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         '-disposition:s:0', 'default',
         '-metadata:s:s:0', 'language=eng',
         '-metadata:s:s:0', 'title=Hinglish'
-    ] + attach_args +['-progress', 'pipe:1', output_path]
+    ] + attach_args + ['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
@@ -179,22 +193,17 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     return proc.returncode == 0
 
 # ================================
-# THUMBNAIL COMMANDS
+# COMMANDS & HANDLERS
 # ================================
 async def cmd_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     thumb_id = context.user_data.get('thumb_id')
     if thumb_id:
         await update.message.reply_photo(photo=thumb_id, caption="🖼️ This is your **Current Thumbnail**.\nSend a new image (photo) to replace it, or type /skip to cancel.")
     else:
         await update.message.reply_text("🖼️ You don't have a thumbnail set yet.\nSend an image (photo) now, or type /skip to cancel.")
-    
     context.user_data['state'] = 'WAITING_FOR_THUMBNAIL'
 
 async def cmd_delthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     if 'thumb_id' in context.user_data:
         del context.user_data['thumb_id']
         await update.message.reply_text("🗑️ Thumbnail removed successfully!")
@@ -202,19 +211,13 @@ async def cmd_delthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You don't have any thumbnail set.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     if context.user_data.get('state') == 'WAITING_FOR_THUMBNAIL':
-        context.user_data['state'] = None # RACE CONDITION FIX
+        context.user_data['state'] = None 
         photo = update.message.photo[-1]
         context.user_data['thumb_id'] = photo.file_id
         await update.message.reply_text("✅ Thumbnail Saved Successfully!\nIt will be auto-cropped to 1:1. Send /delthumb to remove it.")
 
-# ================================
-# MAIN HANDLERS
-# ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
     msg = (
         "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
         "1️⃣ Send an MKV file.\n"
@@ -226,31 +229,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     state = context.user_data.get('state')
     if state == 'WAITING_FOR_RENAME':
-        context.user_data['state'] = None # RACE CONDITION FIX
+        context.user_data['state'] = None
         original_name = context.user_data.get('original_mkv_name')
         await queue_task_start(update, context, original_name)
     elif state == 'WAITING_FOR_THUMBNAIL':
-        context.user_data['state'] = None # RACE CONDITION FIX
+        context.user_data['state'] = None
         await update.message.reply_text("❌ Thumbnail update skipped.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     if context.user_data.get('state') == 'WAITING_FOR_RENAME':
-        context.user_data['state'] = None # RACE CONDITION FIX (Yeh line bot ko dubara queue start karne se rokegi)
-        
+        context.user_data['state'] = None 
         new_name = update.message.text.strip()
         if not new_name.lower().endswith('.mkv'):
             new_name += '.mkv'
         await queue_task_start(update, context, new_name)
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     doc = update.message.document
     if not doc: return
     ext = os.path.splitext(doc.file_name)[1].lower()
@@ -263,7 +259,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get('state') == 'WAITING_FOR_SUB':
             context.user_data['sub_file_id'] = doc.file_id
             context.user_data['sub_file_name'] = doc.file_name
-            context.user_data['state'] = 'WAITING_FOR_RENAME' # Move instantly to Rename
+            context.user_data['state'] = 'WAITING_FOR_RENAME'
             
             await update.message.reply_text(
                 "✅ Subtitle received!\n\n"
@@ -272,8 +268,6 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
         return await msg.reply_text("Please reply to an MKV file message with /sub.")
@@ -381,8 +375,6 @@ async def process_muxing_core(context, task_data, status_msg):
         clean_temp_files(task_dir)
 
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
-
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
         return await msg.reply_text("Please reply to an MKV file message with /extract.")
@@ -419,7 +411,6 @@ async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE,
         clean_temp_files(*extracted_files)
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if is_duplicate(update): return
     query = update.callback_query
     await query.answer()
     
@@ -452,6 +443,8 @@ def main():
         .build()
     )
 
+    app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("thumbnail", cmd_thumbnail))
@@ -465,7 +458,7 @@ def main():
     
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
 
-    print("Bot is up! Queue System Active...")
+    print("Bot is up! Strict DB Middleware Queue System Active...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
