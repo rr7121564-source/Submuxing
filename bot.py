@@ -5,6 +5,7 @@ import asyncio
 import logging
 import threading
 import shutil
+import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -19,18 +20,67 @@ logging.basicConfig(
 active_processes = {}
 
 # ================================
-# ANTI-DUPLICATE SYSTEM (Fixes Double Reply)
+# ANTI-DUPLICATE SYSTEM (Fixes Double Reply & Double Muxing)
 # ================================
-processed_updates =[]
+DB_PATH = os.path.abspath("anti_duplicate.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c = conn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY)')
+    conn.commit()
+    conn.close()
+
+init_db()
+processed_updates_mem =[]
+
 def is_duplicate(update: Update) -> bool:
-    if not update: return False
+    if not update or not update.update_id: 
+        return False
+        
     uid = update.update_id
-    if uid in processed_updates:
+    
+    # 1. Fast Memory Check
+    if uid in processed_updates_mem:
         return True
-    processed_updates.append(uid)
-    if len(processed_updates) > 2000:
-        processed_updates.pop(0)
-    return False
+        
+    # 2. Cross-Process Database Check
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=2)
+        c = conn.cursor()
+        c.execute("INSERT INTO processed_updates (update_id) VALUES (?)", (uid,))
+        conn.commit()
+        
+        # Periodic DB Cleanup to avoid large sizes
+        if len(processed_updates_mem) % 100 == 0:
+            try:
+                c.execute("DELETE FROM processed_updates WHERE update_id <= ? - 2000", (uid,))
+                conn.commit()
+            except: pass
+            
+        processed_updates_mem.append(uid)
+        if len(processed_updates_mem) > 2000:
+            processed_updates_mem.pop(0)
+            
+        return False
+    except sqlite3.IntegrityError:
+        # Already exists in DB - another bot process handled it!
+        if uid not in processed_updates_mem:
+            processed_updates_mem.append(uid)
+            if len(processed_updates_mem) > 2000:
+                processed_updates_mem.pop(0)
+        return True
+    except Exception as e:
+        logging.error(f"DB Error in is_duplicate: {e}")
+        processed_updates_mem.append(uid)
+        if len(processed_updates_mem) > 2000:
+            processed_updates_mem.pop(0)
+        return False
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
 
 # Global Lock for Queue System
 global_task_lock = asyncio.Lock()
@@ -76,7 +126,7 @@ async def extract_subtitles(mkv_path, original_name):
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
     try: data = json.loads(stdout.decode())
-    except json.JSONDecodeError: return []
+    except json.JSONDecodeError: return[]
 
     extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
@@ -314,6 +364,7 @@ async def process_muxing_core(context, task_data, status_msg):
     
     thumb_path = None
     square_thumb_path = None
+    thumb_file_obj = None
 
     try:
         mkv_file = await context.bot.get_file(task_data['mkv_id'], read_timeout=3600)
@@ -335,7 +386,6 @@ async def process_muxing_core(context, task_data, status_msg):
 
         await status_msg.edit_text("⚙️ Starting Fast Muxing...\n(Subtitle: Hinglish | Autoplay: ON)")
         
-        # NOTE: Humne function me se thumb_path pass karna band kar diya hai
         success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
 
         if success:
@@ -350,9 +400,10 @@ async def process_muxing_core(context, task_data, status_msg):
                 'write_timeout': 3600
             }
             
-            # Yahan sirff telegram ki API ko thumbnail bhej rahe hain
+            # Clean safe opening of thumbnail
             if square_thumb_path and os.path.exists(square_thumb_path):
-                kwargs['thumbnail'] = open(square_thumb_path, 'rb')
+                thumb_file_obj = open(square_thumb_path, 'rb')
+                kwargs['thumbnail'] = thumb_file_obj
             
             upload_task = asyncio.create_task(context.bot.send_document(**kwargs))
 
@@ -369,9 +420,12 @@ async def process_muxing_core(context, task_data, status_msg):
         else:
             if context.user_data.get('cancelled'): await status_msg.edit_text("❌ Process cancelled.")
             else: await status_msg.edit_text("⚠️ An error occurred during muxing.")
+            
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
     finally:
+        if thumb_file_obj:
+            thumb_file_obj.close()
         clean_temp_files(task_dir)
 
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,7 +443,6 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
     chat_id = update.effective_chat.id
     status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Acquiring MKV for extraction...")
-    ts = int(time.time())
     extracted_files =[]
 
     try:
@@ -415,6 +468,7 @@ async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE,
         clean_temp_files(*extracted_files)
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if is_duplicate(update): return
     query = update.callback_query
     await query.answer()
     
