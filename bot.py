@@ -17,7 +17,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 active_processes = {}
-processed_updates = set() 
+
+# ================================
+# ANTI-DUPLICATE SYSTEM (Fixes Double Reply)
+# ================================
+processed_updates =[]
+def is_duplicate(update: Update) -> bool:
+    if not update: return False
+    uid = update.update_id
+    if uid in processed_updates:
+        return True
+    processed_updates.append(uid)
+    if len(processed_updates) > 2000:
+        processed_updates.pop(0)
+    return False
 
 # Global Lock for Queue System
 global_task_lock = asyncio.Lock()
@@ -63,12 +76,12 @@ async def extract_subtitles(mkv_path, original_name):
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
     try: data = json.loads(stdout.decode())
-    except json.JSONDecodeError: return[]
+    except json.JSONDecodeError: return []
 
     extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
 
-    for stream in data.get('streams',[]):
+    for stream in data.get('streams', []):
         index = stream['index']
         codec = stream.get('codec_name', 'subrip')
         if codec == "ass": ext = ".ass"
@@ -85,6 +98,7 @@ async def extract_subtitles(mkv_path, original_name):
     return extracted_files
 
 async def create_square_thumbnail(input_path, output_path):
+    """Crops image to 1:1 square specifically for Telegram UI"""
     cmd =[
         'ffmpeg', '-y', '-i', input_path,
         '-vf', "crop='min(iw,ih)':'min(iw,ih)',scale=320:320",
@@ -99,17 +113,19 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     attach_args =[]
     attach_index = 0
 
+    # ONLY ADD FONTS INSIDE MKV METADATA (No Thumbnail here)
     for font_file in os.listdir("fonts"):
         font_path = os.path.join("fonts", font_file)
         ext = os.path.splitext(font_file)[1].lower()
         mimetype = ""
-        if ext in['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
+        if ext in ['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
         elif ext == '.otf': mimetype = "application/vnd.ms-opentype"
             
         if mimetype:
             attach_args.extend(["-attach", font_path, f"-metadata:s:t:{attach_index}", f"mimetype={mimetype}"])
             attach_index += 1
 
+    # MUX COMMAND
     cmd =[
         'ffmpeg', '-y', '-i', mkv_path, '-i', sub_path, 
         '-map', '0:v', '-map', '0:a?', '-map', '1', 
@@ -117,7 +133,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         '-disposition:s:0', 'default',
         '-metadata:s:s:0', 'language=eng',
         '-metadata:s:s:0', 'title=Hinglish'
-    ] + attach_args +['-progress', 'pipe:1', output_path]
+    ] + attach_args + ['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
@@ -154,8 +170,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # THUMBNAIL COMMANDS
 # ================================
 async def cmd_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     thumb_id = context.user_data.get('thumb_id')
     if thumb_id:
@@ -164,13 +179,13 @@ async def cmd_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="🖼️ This is your **Current Thumbnail**.\n\nSend a new image (photo) to replace it, or type /skip to cancel."
         )
     else:
-        await update.message.reply_text("🖼️ You don't have a thumbnail set yet.\n\nSend an image (photo) now to set it as the default cover art for all your MKV files, or type /skip to cancel.")
+        await update.message.reply_text("🖼️ You don't have a thumbnail set yet.\n\nSend an image (photo) now to set it as the default cover art for all your Telegram uploads, or type /skip to cancel.")
     
     context.user_data['state'] = 'WAITING_FOR_THUMBNAIL'
 
 async def cmd_delthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
+
     if 'thumb_id' in context.user_data:
         del context.user_data['thumb_id']
         await update.message.reply_text("🗑️ Thumbnail removed successfully!")
@@ -178,26 +193,25 @@ async def cmd_delthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ You don't have any thumbnail set.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     if context.user_data.get('state') == 'WAITING_FOR_THUMBNAIL':
         photo = update.message.photo[-1]
         context.user_data['thumb_id'] = photo.file_id
         context.user_data['state'] = None
-        await update.message.reply_text("✅ Thumbnail Saved Successfully!\n\nIt will be auto-cropped to 1:1 and sent as the Telegram document cover for all future muxed files. Send /delthumb to remove it.")
+        await update.message.reply_text("✅ Thumbnail Saved Successfully!\n\nIt will be auto-cropped to 1:1 and used ONLY as a Telegram Document Cover. Send /delthumb to remove it.")
 
 # ================================
 # MAIN HANDLERS
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
+
     msg = (
         "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
         "1️⃣ Send an MKV file.\n"
         "2️⃣ Reply with /sub to add subtitle.\n"
-        "3️⃣ /thumbnail - Set a Telegram cover image.\n"
+        "3️⃣ /thumbnail - Set a Cover Picture for Telegram.\n"
         "4️⃣ You can rename output file instantly.\n"
         "5️⃣ Add multiple tasks, I will process them one by one!\n\n"
         "📌 Send me an MKV to begin."
@@ -205,8 +219,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     state = context.user_data.get('state')
     if state == 'WAITING_FOR_RENAME':
@@ -217,8 +230,7 @@ async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Thumbnail update skipped.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     if context.user_data.get('state') == 'WAITING_FOR_RENAME':
         new_name = update.message.text.strip()
@@ -227,8 +239,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await queue_task_start(update, context, new_name)
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     doc = update.message.document
     if not doc: return
@@ -238,7 +249,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['original_mkv_name'] = doc.file_name
         msg = "🎥 MKV received!\n\n• To mux a subtitle: Reply to this message with /sub"
         await update.message.reply_text(msg)
-    elif ext in ['.srt', '.ass']:
+    elif ext in['.srt', '.ass']:
         if context.user_data.get('state') == 'WAITING_FOR_SUB':
             context.user_data['sub_file_id'] = doc.file_id
             context.user_data['sub_file_name'] = doc.file_name
@@ -251,8 +262,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
@@ -320,19 +330,19 @@ async def process_muxing_core(context, task_data, status_msg):
             thumb_file = await context.bot.get_file(task_data['thumb_id'], read_timeout=100)
             await thumb_file.download_to_drive(thumb_path)
             
-            # Crop to perfect square 320x320
+            # Crop to perfect square 320x320 for Telegram Document Cover
             await create_square_thumbnail(thumb_path, square_thumb_path)
 
         await status_msg.edit_text("⚙️ Starting Fast Muxing...\n(Subtitle: Hinglish | Autoplay: ON)")
         
-        # Mux Video without passing the thumbnail inside the video
+        # NOTE: Humne function me se thumb_path pass karna band kar diya hai
         success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
 
         if success:
             file_uri = f"file://{output_mkv}"
             start_upload = time.time()
             
-            # Here we tell Telegram to use our Square Image as Document Cover
+            # Telegram upload configuration
             kwargs = {
                 'chat_id': chat_id,
                 'document': file_uri,
@@ -340,6 +350,7 @@ async def process_muxing_core(context, task_data, status_msg):
                 'write_timeout': 3600
             }
             
+            # Yahan sirff telegram ki API ko thumbnail bhej rahe hain
             if square_thumb_path and os.path.exists(square_thumb_path):
                 kwargs['thumbnail'] = open(square_thumb_path, 'rb')
             
@@ -364,8 +375,7 @@ async def process_muxing_core(context, task_data, status_msg):
         clean_temp_files(task_dir)
 
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.update_id in processed_updates: return
-    processed_updates.add(update.update_id)
+    if is_duplicate(update): return
 
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
@@ -407,6 +417,7 @@ async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     chat_id = update.effective_chat.id
     if chat_id in active_processes:
         active_processes[chat_id].terminate()
