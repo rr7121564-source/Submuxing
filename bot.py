@@ -10,53 +10,33 @@ from telegram.ext import (
 )
 
 # Setup basic logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 active_processes = {}
 
 # ================================
 # UTILITY FUNCTIONS
 # ================================
 def clean_temp_files(*filepaths):
-    """Safely removes temporary files."""
     for path in filepaths:
         if path and os.path.exists(path):
             try:
                 os.remove(path)
             except Exception as e:
-                print(f"Failed to delete {path}: {e}")
+                pass
 
 async def get_duration(file_path):
-    cmd =[
-        'ffprobe', '-v', 'error', '-show_entries',
-        'format=duration', '-of',
-        'default=noprint_wrappers=1:nokey=1', file_path
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-    )
+    cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
-    try:
-        return float(stdout.decode().strip())
-    except ValueError:
-        return 0.0
+    try: return float(stdout.decode().strip())
+    except ValueError: return 0.0
 
 async def extract_subtitles(mkv_path, original_name):
-    cmd =[
-        'ffprobe', '-v', 'error', '-select_streams', 's',
-        '-show_entries', 'stream=index,codec_name', '-of', 'json', mkv_path
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-    )
+    cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name', '-of', 'json', mkv_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
-    try:
-        data = json.loads(stdout.decode())
-    except json.JSONDecodeError:
-        return[]
+    try: data = json.loads(stdout.decode())
+    except json.JSONDecodeError: return []
 
     extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
@@ -99,33 +79,26 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 
     while True:
         line = await proc.stdout.readline()
-        if not line:
-            break
+        if not line: break
         line = line.decode('utf-8').strip()
 
-        if line.startswith('speed='):
-            speed = line.split('=')[1]
+        if line.startswith('speed='): speed = line.split('=')[1]
         if line.startswith('out_time_us='):
             out_time_us = line.split('=')[1]
             if out_time_us.isdigit() and duration > 0:
-                current_time = int(out_time_us) / 1000000
-                percentage = min(100, (current_time / duration) * 100)
-
+                percentage = min(100, (int(out_time_us) / 1000000 / duration) * 100)
                 now = time.time()
                 if now - last_update_time > 3:
                     last_update_time = now
                     elapsed = now - start_time
-                    eta_str = time.strftime('%H:%M:%S', time.gmtime((elapsed / percentage) * (100 - percentage))) if percentage > 0 else "Calculating..."
+                    eta_str = time.strftime('%H:%M:%S', time.gmtime((elapsed / percentage) * (100 - percentage))) if percentage > 0 else "..."
                     text = f"⏳ <b>Muxing Progress</b>\n\n<b>Progress:</b> <code>{percentage:.2f}%</code>\n<b>Speed:</b> <code>{speed}</code>\n<b>ETA:</b> <code>{eta_str}</code>"
                     cancel_kbd = InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]])
-                    try:
-                        await status_msg.edit_text(text, reply_markup=cancel_kbd, parse_mode='HTML')
-                    except Exception:
-                        pass 
+                    try: await status_msg.edit_text(text, reply_markup=cancel_kbd, parse_mode='HTML')
+                    except Exception: pass 
 
     await proc.wait()
-    if chat_id in active_processes:
-        del active_processes[chat_id]
+    if chat_id in active_processes: del active_processes[chat_id]
     return proc.returncode == 0
 
 # ================================
@@ -133,23 +106,150 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # ================================
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
-    if not doc:
-        return
+    if not doc: return
     ext = os.path.splitext(doc.file_name)[1].lower()
 
     if ext == '.mkv':
         await update.message.reply_text("MKV received! 🎥\n\n• To mux a subtitle: Reply to this message with /sub\n• To extract subtitles: Reply to this message with /extract")
-    elif ext in['.srt', '.ass']:
-        if context.user_data.get('state') == 'WAITING_FOR_SUB':
-            await process_muxing(update, context)
+    elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAITING_FOR_SUB':
+        await process_muxing(update, context)
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    if not message.reply_to_message or not message.reply_to_message.document:
-        await message.reply_text("Please reply to an MKV file message with /sub.")
-        return
-    doc = message.reply_to_message.document
+    msg = update.message
+    if not msg.reply_to_message or not msg.reply_to_message.document:
+        return await msg.reply_text("Please reply to an MKV file message with /sub.")
+    doc = msg.reply_to_message.document
     if not doc.file_name.lower().endswith('.mkv'):
+        return await msg.reply_text("The replied message is not an MKV file.")
+
+    context.user_data['mkv_file_id'] = doc.file_id
+    context.user_data['mkv_file_name'] = doc.file_name
+    context.user_data['state'] = 'WAITING_FOR_SUB'
+    await msg.reply_text("MKV selected! ✅\nNow upload the subtitle file (.srt or .ass).")
+
+async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sub_doc = update.message.document
+    chat_id = update.effective_chat.id
+    status_msg = await update.message.reply_text("Downloading MKV and Subtitle (up to 2GB allowed)... 📥")
+    ts = int(time.time())
+
+    mkv_path = f"temp_{chat_id}_{ts}.mkv"
+    sub_path = f"temp_{chat_id}_{ts}_{sub_doc.file_name}"
+    output_mkv = f"muxed_{chat_id}_{ts}.mkv"
+
+    try:
+        mkv_file = await context.bot.get_file(context.user_data.get('mkv_file_id'))
+        await mkv_file.download_to_drive(mkv_path)
+        sub_file = await context.bot.get_file(sub_doc.file_id)
+        await sub_file.download_to_drive(sub_path)
+        
+        await status_msg.edit_text("Starting mux process... ⚙️")
+        success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
+
+        if success:
+            await status_msg.edit_text("Muxing complete! Uploading... 📤")
+            with open(output_mkv, 'rb') as f:
+                # read timeout 300 seconds given for large files upload
+                await context.bot.send_document(chat_id=chat_id, document=f, read_timeout=300, write_timeout=300)
+            await status_msg.delete()
+        else:
+            if context.user_data.get('cancelled'):
+                await status_msg.edit_text("Process cancelled by user. ❌")
+                context.user_data['cancelled'] = False
+            else:
+                await status_msg.edit_text("An error occurred during muxing. ⚠️")
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)}")
+    finally:
+        clean_temp_files(mkv_path, sub_path, output_mkv)
+        context.user_data['state'] = None
+
+async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not msg.reply_to_message.document:
+        return await msg.reply_text("Please reply to an MKV file message with /extract.")
+    doc = msg.reply_to_message.document
+    if not doc.file_name.lower().endswith('.mkv'):
+        return await msg.reply_text("The replied message is not an MKV file.")
+
+    chat_id = update.effective_chat.id
+    status_msg = await msg.reply_text("Downloading MKV for extraction... 📥")
+    ts = int(time.time())
+    mkv_path = f"extract_{chat_id}_{ts}.mkv"
+    extracted_files =[]
+
+    try:
+        mkv_file = await context.bot.get_file(doc.file_id)
+        await mkv_file.download_to_drive(mkv_path)
+        await status_msg.edit_text("Extracting subtitles... ⚙️")
+        extracted_files = await extract_subtitles(mkv_path, doc.file_name)
+
+        if not extracted_files:
+            return await status_msg.edit_text("No subtitle streams found in this MKV. ❌")
+
+        await status_msg.edit_text(f"Found {len(extracted_files)} subtitles. Uploading... 📤")
+        for sub_file in extracted_files:
+            with open(sub_file, 'rb') as f:
+                await context.bot.send_document(chat_id=chat_id, document=f)
+        await status_msg.delete()
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)}")
+    finally:
+        clean_temp_files(mkv_path, *extracted_files)
+
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    if chat_id in active_processes:
+        active_processes[chat_id].terminate()
+        context.user_data['cancelled'] = True
+        await query.edit_message_text("Cancelling process... 🛑")
+    else:
+        await query.answer("No active process to cancel.", show_alert=True)
+
+# ================================
+# MAIN ENTRY POINT
+# ================================
+def main():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        print("Error: BOT_TOKEN is missing!")
+        return
+
+    os.makedirs("fonts", exist_ok=True)
+    
+    # 🌟 CONNECTING TO OUR VIP LOCAL API SERVER (Bypasses 20MB Limit)
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .base_url("http://127.0.0.1:8081/bot")
+        .base_file_url("http://127.0.0.1:8081/file/bot")
+        .local_mode(True)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("sub", cmd_sub))
+    app.add_handler(CommandHandler("extract", cmd_extract))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
+    app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
+
+    port = int(os.environ.get("PORT", 10000)) 
+    
+    print(f"Starting Local Webhook on port {port}...")
+    try:
+        # Render ka health check paas karne ke liye ye chalana zaruri hai
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"http://127.0.0.1:{port}/{token}", # Local traffic only
+        )
+    except Exception as e:
+        print(f"WEBHOOK ERROR: {e}")
+
+if __name__ == "__main__":
+    main()    if not doc.file_name.lower().endswith('.mkv'):
         await message.reply_text("The replied message is not an MKV file.")
         return
 
