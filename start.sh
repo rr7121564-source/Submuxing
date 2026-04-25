@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if[ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
+if [ -z "$API_ID" ] || [ -z "$API_HASH" ]; then
     echo "ERROR: API_ID or API_HASH is missing in Render Environment Variables!"
     exit 1
 fi
