@@ -64,7 +64,7 @@ async def extract_subtitles(mkv_path, original_name):
     extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
 
-    for stream in data.get('streams', []):
+    for stream in data.get('streams',[]):
         index = stream['index']
         codec = stream.get('codec_name', 'subrip')
         ext = ".ass" if codec == "ass" else ".srt" if codec == "subrip" else ".vtt"
@@ -149,7 +149,190 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                         eta_str = "..."
                         
                     text = (
-                        f"⏳ <b>Muxing Progress</b>\n\n"
+                        f"[WAIT] <b>Muxing Progress</b>\n\n"
+                        f"<b>Progress:</b> <code>{percentage:.2f}%</code>\n"
+                        f"<b>Speed:</b> <code>{speed}</code>\n"
+                        f"<b>ETA:</b> <code>{eta_str}</code>"
+                    )
+                    cancel_kbd = InlineKeyboardMarkup([[
+                        InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")
+                    ]])
+                    try: 
+                        await status_msg.edit_text(text, reply_markup=cancel_kbd, parse_mode='HTML')
+                    except Exception: 
+                        pass 
+
+    await proc.wait()
+    if chat_id in active_processes: 
+        del active_processes[chat_id]
+        
+    return proc.returncode == 0
+
+# ================================
+# TELEGRAM HANDLERS
+# ================================
+async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc: 
+        return
+        
+    ext = os.path.splitext(doc.file_name)[1].lower()
+
+    if ext == '.mkv':
+        msg = (
+            "MKV received![MOVIE]\n\n"
+            "• To mux a subtitle: Reply to this message with /sub\n"
+            "• To extract subtitles: Reply to this message with /extract"
+        )
+        await update.message.reply_text(msg)
+    elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAITING_FOR_SUB':
+        await process_muxing(update, context)
+
+async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not msg.reply_to_message.document:
+        return await msg.reply_text("Please reply to an MKV file message with /sub.")
+        
+    doc = msg.reply_to_message.document
+    if not doc.file_name.lower().endswith('.mkv'):
+        return await msg.reply_text("The replied message is not an MKV file.")
+
+    context.user_data['mkv_file_id'] = doc.file_id
+    context.user_data['mkv_file_name'] = doc.file_name
+    context.user_data['state'] = 'WAITING_FOR_SUB'
+    await msg.reply_text("MKV selected! [OK]\nNow upload the subtitle file (.srt or .ass).")
+
+async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sub_doc = update.message.document
+    chat_id = update.effective_chat.id
+    status_msg = await update.message.reply_text("Downloading MKV and Subtitle (up to 2GB allowed)... [DOWNLOADING]")
+    ts = int(time.time())
+
+    mkv_path = f"temp_{chat_id}_{ts}.mkv"
+    sub_path = f"temp_{chat_id}_{ts}_{sub_doc.file_name}"
+    output_mkv = f"muxed_{chat_id}_{ts}.mkv"
+
+    try:
+        mkv_file = await context.bot.get_file(context.user_data.get('mkv_file_id'))
+        await mkv_file.download_to_drive(mkv_path)
+        
+        sub_file = await context.bot.get_file(sub_doc.file_id)
+        await sub_file.download_to_drive(sub_path)
+        
+        await status_msg.edit_text("Starting mux process...[PROCESSING]\n(Old subtitles will be removed)")
+        success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
+
+        if success:
+            await status_msg.edit_text("Muxing complete! Uploading... [UPLOADING]")
+            with open(output_mkv, 'rb') as f:
+                await context.bot.send_document(
+                    chat_id=chat_id, 
+                    document=f, 
+                    read_timeout=300, 
+                    write_timeout=300
+                )
+            await status_msg.delete()
+        else:
+            if context.user_data.get('cancelled'):
+                await status_msg.edit_text("Process cancelled by user. [X]")
+                context.user_data['cancelled'] = False
+            else:
+                await status_msg.edit_text("An error occurred during muxing.[WARNING]")
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)}")
+    finally:
+        clean_temp_files(mkv_path, sub_path, output_mkv)
+        context.user_data['state'] = None
+
+async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not msg.reply_to_message.document:
+        return await msg.reply_text("Please reply to an MKV file message with /extract.")
+        
+    doc = msg.reply_to_message.document
+    if not doc.file_name.lower().endswith('.mkv'):
+        return await msg.reply_text("The replied message is not an MKV file.")
+
+    chat_id = update.effective_chat.id
+    status_msg = await msg.reply_text("Downloading MKV for extraction... [DOWNLOADING]")
+    ts = int(time.time())
+    mkv_path = f"extract_{chat_id}_{ts}.mkv"
+    extracted_files =[]
+
+    try:
+        mkv_file = await context.bot.get_file(doc.file_id)
+        await mkv_file.download_to_drive(mkv_path)
+        await status_msg.edit_text("Extracting subtitles... [PROCESSING]")
+        
+        extracted_files = await extract_subtitles(mkv_path, doc.file_name)
+
+        if not extracted_files:
+            return await status_msg.edit_text("No subtitle streams found in this MKV. [X]")
+
+        await status_msg.edit_text(f"Found {len(extracted_files)} subtitles. Uploading... [UPLOADING]")
+        for sub_file in extracted_files:
+            with open(sub_file, 'rb') as f:
+                await context.bot.send_document(chat_id=chat_id, document=f)
+        await status_msg.delete()
+    except Exception as e:
+        await status_msg.edit_text(f"Error: {str(e)}")
+    finally:
+        clean_temp_files(mkv_path, *extracted_files)
+
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    
+    if chat_id in active_processes:
+        active_processes[chat_id].terminate()
+        context.user_data['cancelled'] = True
+        await query.edit_message_text("Cancelling process...[STOPPED]")
+    else:
+        await query.answer("No active process to cancel.", show_alert=True)
+
+# ================================
+# MAIN ENTRY POINT
+# ================================
+def main():
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        print("Error: BOT_TOKEN is missing!")
+        return
+
+    os.makedirs("fonts", exist_ok=True)
+    
+    # CONNECTING TO OUR VIP LOCAL API SERVER (Bypasses 20MB Limit)
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .base_url("http://127.0.0.1:8081/bot")
+        .base_file_url("http://127.0.0.1:8081/file/bot")
+        .local_mode(True)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("sub", cmd_sub))
+    app.add_handler(CommandHandler("extract", cmd_extract))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
+    app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
+
+    port = int(os.environ.get("PORT", 10000)) 
+    
+    print(f"Starting Local Webhook on port {port}...")
+    try:
+        # Render health check bypass
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=f"http://127.0.0.1:{port}/{token}",
+        )
+    except Exception as e:
+        print(f"WEBHOOK ERROR: {e}")
+
+if __name__ == "__main__":
+    main()                        f"⏳ <b>Muxing Progress</b>\n\n"
                         f"<b>Progress:</b> <code>{percentage:.2f}%</code>\n"
                         f"<b>Speed:</b> <code>{speed}</code>\n"
                         f"<b>ETA:</b> <code>{eta_str}</code>"
