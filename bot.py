@@ -17,11 +17,6 @@ def main():
 
     # Ensure fonts directory exists on startup
     os.makedirs("fonts", exist_ok=True)
-
-    # ---------------------------------------------------------
-    # FOR LARGE FILES (>20MB) UNCOMMENT AND USE A LOCAL BOT API:
-    # app = ApplicationBuilder().token(token).base_url("http://YOUR_LOCAL_IP:8081/bot").build()
-    # ---------------------------------------------------------
     
     app = ApplicationBuilder().token(token).build()
 
@@ -31,8 +26,26 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
 
-    print("Bot is up and running...")
-    app.run_polling()
+    # ==========================================
+    # WEBHOOK SETUP FOR RENDER WEB SERVICE
+    # ==========================================
+    # Render automatically provides the PORT environment variable
+    port = int(os.environ.get("PORT", 10000)) 
+    
+    # You need to set this environment variable in Render Dashboard
+    webhook_url = os.environ.get("WEBHOOK_URL") 
+
+    if webhook_url:
+        print(f"Starting Webhook on port {port} for URL: {webhook_url}...")
+        # Start webhook (Requires for Render Web Service health-check)
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=f"{webhook_url}/{token}",
+        )
+    else:
+        print("WEBHOOK_URL not found. Falling back to Polling (Local Mode)...")
+        app.run_polling()
 
 if __name__ == "__main__":
     main()
