@@ -53,10 +53,10 @@ async def extract_subtitles(mkv_path, original_name):
     except json.JSONDecodeError:
         return[]
 
-    extracted_files = []
+    extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
 
-    for stream in data.get('streams', []):
+    for stream in data.get('streams',[]):
         index = stream['index']
         codec = stream.get('codec_name', 'subrip')
         if codec == "ass":
@@ -90,7 +90,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         font_path = os.path.join("fonts", font_file)
         ext = os.path.splitext(font_file)[1].lower()
         mimetype = ""
-        if ext in ['.ttf', '.ttc']:
+        if ext in['.ttf', '.ttc']:
             mimetype = "application/x-truetype-font"
         elif ext == '.otf':
             mimetype = "application/vnd.ms-opentype"
@@ -158,6 +158,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         
     return proc.returncode == 0
 
+
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if not doc:
@@ -169,7 +170,9 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "MKV received! [MOVIE]\n\n• To mux a subtitle: Reply to this message with /sub\n• To extract subtitles: Reply to this message with /extract"
         await update.message.reply_text(msg)
     elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAITING_FOR_SUB':
-        await process_muxing(update, context)
+        # PREVENT DOUBLE REPLIES: State ko turant change karo aur processing background mein bhej do
+        context.user_data['state'] = 'PROCESSING'
+        asyncio.create_task(process_muxing(update, context))
 
 async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -190,7 +193,7 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub_doc = update.message.document
     chat_id = update.effective_chat.id
-    status_msg = await update.message.reply_text("Downloading MKV and Subtitle (up to 2GB allowed)... [DOWNLOADING]")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="Downloading MKV and Subtitle (up to 2GB allowed)... [DOWNLOADING]")
     ts = int(time.time())
 
     mkv_path = f"temp_{chat_id}_{ts}.mkv"
@@ -198,10 +201,11 @@ async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output_mkv = f"muxed_{chat_id}_{ts}.mkv"
 
     try:
-        mkv_file = await context.bot.get_file(context.user_data.get('mkv_file_id'))
+        # INCREASED TIMEOUT TO 2000 SECONDS FOR LARGE FILES
+        mkv_file = await context.bot.get_file(context.user_data.get('mkv_file_id'), read_timeout=2000)
         await mkv_file.download_to_drive(mkv_path)
         
-        sub_file = await context.bot.get_file(sub_doc.file_id)
+        sub_file = await context.bot.get_file(sub_doc.file_id, read_timeout=2000)
         await sub_file.download_to_drive(sub_path)
         
         await status_msg.edit_text("Starting mux process... [PROCESSING]\n(Old subtitles will be removed)")
@@ -210,11 +214,12 @@ async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if success:
             await status_msg.edit_text("Muxing complete! Uploading... [UPLOADING]")
             with open(output_mkv, 'rb') as f:
+                # INCREASED WRITE TIMEOUT TO PREVENT CRASH DURING UPLOAD
                 await context.bot.send_document(
                     chat_id=chat_id,
                     document=f,
-                    read_timeout=300,
-                    write_timeout=300
+                    read_timeout=2000,
+                    write_timeout=2000
                 )
             await status_msg.delete()
         else:
@@ -229,6 +234,7 @@ async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean_temp_files(mkv_path, sub_path, output_mkv)
         context.user_data['state'] = None
 
+
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
@@ -240,14 +246,19 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("The replied message is not an MKV file.")
         return
 
+    # BACKGROUND PROCESSING FOR EXTRACTION
+    asyncio.create_task(process_extraction(update, context, doc))
+
+async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
     chat_id = update.effective_chat.id
-    status_msg = await msg.reply_text("Downloading MKV for extraction... [DOWNLOADING]")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="Downloading MKV for extraction...[DOWNLOADING]")
     ts = int(time.time())
     mkv_path = f"extract_{chat_id}_{ts}.mkv"
     extracted_files =[]
 
     try:
-        mkv_file = await context.bot.get_file(doc.file_id)
+        # INCREASED TIMEOUT
+        mkv_file = await context.bot.get_file(doc.file_id, read_timeout=2000)
         await mkv_file.download_to_drive(mkv_path)
         await status_msg.edit_text("Extracting subtitles... [PROCESSING]")
         
@@ -260,12 +271,18 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"Found {len(extracted_files)} subtitles. Uploading... [UPLOADING]")
         for sub_file in extracted_files:
             with open(sub_file, 'rb') as f:
-                await context.bot.send_document(chat_id=chat_id, document=f)
+                await context.bot.send_document(
+                    chat_id=chat_id, 
+                    document=f,
+                    read_timeout=2000,
+                    write_timeout=2000
+                )
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
     finally:
         clean_temp_files(mkv_path, *extracted_files)
+
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -275,7 +292,7 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in active_processes:
         active_processes[chat_id].terminate()
         context.user_data['cancelled'] = True
-        await query.edit_message_text("Cancelling process... [STOPPED]")
+        await query.edit_message_text("Cancelling process...[STOPPED]")
     else:
         await query.answer("No active process to cancel.", show_alert=True)
 
@@ -287,7 +304,19 @@ def main():
 
     os.makedirs("fonts", exist_ok=True)
     
-    app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
+    # ADDED HIGH TIMEOUTS TO APPLICATION BUILDER
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .base_url("http://127.0.0.1:8081/bot")
+        .base_file_url("http://127.0.0.1:8081/file/bot")
+        .local_mode(True)
+        .connect_timeout(100)
+        .read_timeout(2000)
+        .write_timeout(2000)
+        .pool_timeout(100)
+        .build()
+    )
 
     app.add_handler(CommandHandler("sub", cmd_sub))
     app.add_handler(CommandHandler("extract", cmd_extract))
