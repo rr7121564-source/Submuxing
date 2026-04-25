@@ -192,10 +192,11 @@ async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text("📤 Uploading MKV to Telegram...\n\n(Large files take 10-20 mins. Please don't cancel!)")
             
             # LIVE UPLOADING TIMER
-            start_upload = time.time()
-            upload_task = asyncio.create_task(
-                context.bot.send_document(chat_id=chat_id, document=open(output_mkv, 'rb'), read_timeout=3600, write_timeout=3600)
-            )
+            # Direct Local Server URI use kar rahe hain
+file_uri = f"file://{os.path.abspath(output_mkv)}"
+upload_task = asyncio.create_task(
+    context.bot.send_document(chat_id=chat_id, document=file_uri, read_timeout=3600, write_timeout=3600)
+)
 
             # Ye loop uploading ke dauran live time update karega, taaki lage na ki atak gaya hai
             while not upload_task.done():
