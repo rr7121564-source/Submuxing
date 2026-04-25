@@ -26,7 +26,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is Running Perfectly!")
     def log_message(self, format, *args):
-        pass # Hide logs
+        pass
 
 def run_dummy_server(port):
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
@@ -58,7 +58,7 @@ async def extract_subtitles(mkv_path, original_name):
     try: data = json.loads(stdout.decode())
     except json.JSONDecodeError: return[]
 
-    extracted_files = []
+    extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
 
     for stream in data.get('streams', []):
@@ -68,7 +68,7 @@ async def extract_subtitles(mkv_path, original_name):
         elif codec == "subrip": ext = ".srt"
         else: ext = ".vtt"
             
-        outfile = f"{base_name}_{index}{ext}"
+        outfile = os.path.abspath(f"{base_name}_{index}{ext}")
         ext_cmd =['ffmpeg', '-y', '-i', mkv_path, '-map', f"0:{index}", '-c:s', 'copy', outfile]
         ext_proc = await asyncio.create_subprocess_exec(*ext_cmd, stderr=asyncio.subprocess.DEVNULL)
         await ext_proc.wait()
@@ -87,7 +87,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         font_path = os.path.join("fonts", font_file)
         ext = os.path.splitext(font_file)[1].lower()
         mimetype = ""
-        if ext in ['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
+        if ext in['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
         elif ext == '.otf': mimetype = "application/vnd.ms-opentype"
             
         if mimetype:
@@ -133,12 +133,12 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🤖 Hello! I am your Advanced MKV Muxing & Extraction Bot.\n\n"
+        "🤖 Hello! I am your Fast MKV Muxing & Extraction Bot.\n\n"
         "Here is what I can do:\n"
         "1️⃣ Send me any MKV movie/episode.\n"
-        "2️⃣ Reply with /sub to add your own subtitles (.srt/.ass) effortlessly.\n"
+        "2️⃣ Reply with /sub to add your own subtitles (.srt/.ass).\n"
         "3️⃣ Reply with /extract to pull all subtitles out of the MKV file.\n\n"
-        "📌 Note: I support files up to 2GB! Send me an MKV file to begin."
+        "📌 Note: I support files up to 2GB and process them at max speed!"
     )
     await update.message.reply_text(msg)
 
@@ -152,7 +152,6 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
     elif ext in ['.srt', '.ass']:
         if context.user_data.get('state') == 'WAITING_FOR_SUB':
-            # STATE INSTANT RESET: Ye code aage aane wale "Double Reply" ko rok dega
             context.user_data['state'] = None
             asyncio.create_task(process_muxing(update, context))
 
@@ -172,42 +171,48 @@ async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_muxing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub_doc = update.message.document
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Downloading files to server... (This is super fast)")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Acquiring files... (Super Fast Mode)")
     ts = int(time.time())
 
-    mkv_path = f"temp_{chat_id}_{ts}.mkv"
-    sub_path = f"temp_{chat_id}_{ts}_{sub_doc.file_name}"
-    output_mkv = f"muxed_{chat_id}_{ts}.mkv"
+    output_mkv = os.path.abspath(f"muxed_{chat_id}_{ts}.mkv")
 
     try:
+        # MAGIC TRICK 1: No python downloading! Get direct local path from C++ Server
         mkv_file = await context.bot.get_file(context.user_data.get('mkv_file_id'), read_timeout=3600)
-        await mkv_file.download_to_drive(mkv_path)
+        mkv_path = mkv_file.file_path 
+        
         sub_file = await context.bot.get_file(sub_doc.file_id, read_timeout=3600)
-        await sub_file.download_to_drive(sub_path)
+        sub_path = sub_file.file_path 
         
         await status_msg.edit_text("⚙️ Starting mux process...\n(Old subtitles will be removed)")
         success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
 
         if success:
-            await status_msg.edit_text("📤 Uploading MKV to Telegram...\n\n(Large files take 10-20 mins. Please don't cancel!)")
+            await status_msg.edit_text("📤 Uploading MKV to Telegram... (High Speed)")
             
-            # LIVE UPLOADING TIMER
-            # Direct Local Server URI use kar rahe hain
-file_uri = f"file://{os.path.abspath(output_mkv)}"
-upload_task = asyncio.create_task(
-    context.bot.send_document(chat_id=chat_id, document=file_uri, read_timeout=3600, write_timeout=3600)
-)
+            # MAGIC TRICK 2: File Teleportation. Python sends path, C++ Server uploads directly.
+            file_uri = f"file://{output_mkv}"
+            start_upload = time.time()
+            
+            upload_task = asyncio.create_task(
+                context.bot.send_document(
+                    chat_id=chat_id, 
+                    document=file_uri, 
+                    read_timeout=3600, 
+                    write_timeout=3600
+                )
+            )
 
-            # Ye loop uploading ke dauran live time update karega, taaki lage na ki atak gaya hai
+            # Live timer
             while not upload_task.done():
                 elapsed = int(time.time() - start_upload)
                 try:
-                    await status_msg.edit_text(f"📤 Uploading MKV to Telegram...\n\n⏱ Elapsed Time: {elapsed} Seconds\n(Server is uploading, please wait...)")
+                    await status_msg.edit_text(f"📤 Uploading MKV to Telegram...\n\n⏱ Elapsed Time: {elapsed} Seconds\n(Pushing file at Max Speed...)")
                 except Exception:
                     pass
                 await asyncio.sleep(5)
             
-            await upload_task # Task complete hone par
+            await upload_task 
             await status_msg.delete()
         else:
             if context.user_data.get('cancelled'): await status_msg.edit_text("❌ Process cancelled by user.")
@@ -215,7 +220,8 @@ upload_task = asyncio.create_task(
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
     finally:
-        clean_temp_files(mkv_path, sub_path, output_mkv)
+        # We only delete OUR output file. We don't touch mkv_path because it's managed by C++ server cache
+        clean_temp_files(output_mkv)
         context.user_data['state'] = None
 
 
@@ -231,14 +237,15 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Downloading MKV for extraction...")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Acquiring MKV for extraction...")
     ts = int(time.time())
-    mkv_path = f"extract_{chat_id}_{ts}.mkv"
     extracted_files =[]
 
     try:
+        # MAGIC TRICK: No Python Download
         mkv_file = await context.bot.get_file(doc.file_id, read_timeout=3600)
-        await mkv_file.download_to_drive(mkv_path)
+        mkv_path = mkv_file.file_path 
+        
         await status_msg.edit_text("⚙️ Extracting subtitles...")
         
         extracted_files = await extract_subtitles(mkv_path, doc.file_name)
@@ -246,15 +253,17 @@ async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if not extracted_files:
             return await status_msg.edit_text("❌ No subtitle streams found in this MKV.")
 
-        await status_msg.edit_text(f"📤 Found {len(extracted_files)} subtitles. Uploading...")
+        await status_msg.edit_text(f"📤 Found {len(extracted_files)} subtitles. Uploading (High Speed)...")
         for sub_file in extracted_files:
-            with open(sub_file, 'rb') as f:
-                await context.bot.send_document(chat_id=chat_id, document=f, read_timeout=3600, write_timeout=3600)
+            # MAGIC TRICK: Direct File Path Upload
+            file_uri = f"file://{sub_file}"
+            await context.bot.send_document(chat_id=chat_id, document=file_uri, read_timeout=3600, write_timeout=3600)
+            
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
     finally:
-        clean_temp_files(mkv_path, *extracted_files)
+        clean_temp_files(*extracted_files)
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -279,12 +288,10 @@ def main():
 
     os.makedirs("fonts", exist_ok=True)
     
-    # Run Dummy Server in Background to pass Render Health Check!
     port = int(os.environ.get("PORT", 10000))
     threading.Thread(target=run_dummy_server, args=(port,), daemon=True).start()
     print(f"Dummy Web Server running on port {port}...")
 
-    # Build Application
     app = (
         ApplicationBuilder()
         .token(token)
@@ -305,7 +312,6 @@ def main():
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
 
     print("Bot is up and polling perfectly...")
-    # IMPORTANT: drop_pending_updates=True clears all old retries (solves the 3-3 msg issue!)
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
