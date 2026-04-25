@@ -23,25 +23,27 @@ def main():
     # Register Handlers
     app.add_handler(CommandHandler("sub", cmd_sub))
     app.add_handler(CommandHandler("extract", cmd_extract))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
+    # filters.DOCUMENT use kiya hai (Ye 100% safe hai aur saare files catch karega)
+    app.add_handler(MessageHandler(filters.DOCUMENT, handle_docs))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
 
     # ==========================================
     # WEBHOOK SETUP FOR RENDER WEB SERVICE
     # ==========================================
-    # Render automatically provides the PORT environment variable
     port = int(os.environ.get("PORT", 10000)) 
-    
-    # You need to set this environment variable in Render Dashboard
     webhook_url = os.environ.get("WEBHOOK_URL") 
 
     if webhook_url:
-        print(f"Starting Webhook on port {port} for URL: {webhook_url}...")
-        # Start webhook (Requires for Render Web Service health-check)
+        # Agar user ne URL ke end mein '/' laga diya hoga, toh ye usko auto-remove kar dega
+        clean_url = webhook_url.rstrip("/")
+        print(f"Starting Webhook on port {port} for URL: {clean_url}...")
+        
+        # Start webhook with explicit url_path
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
-            webhook_url=f"{webhook_url}/{token}",
+            url_path=token,
+            webhook_url=f"{clean_url}/{token}",
         )
     else:
         print("WEBHOOK_URL not found. Falling back to Polling (Local Mode)...")
