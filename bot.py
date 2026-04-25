@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.error import RetryAfter
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
@@ -110,7 +111,7 @@ async def extract_subtitles(mkv_path, original_name):
     extracted_files =[]
     base_name = os.path.splitext(original_name)[0]
 
-    for stream in data.get('streams', []):
+    for stream in data.get('streams',[]):
         index = stream['index']
         codec = stream.get('codec_name', 'subrip')
         if codec == "ass": ext = ".ass"
@@ -145,7 +146,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         font_path = os.path.join("fonts", font_file)
         ext = os.path.splitext(font_file)[1].lower()
         mimetype = ""
-        if ext in['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
+        if ext in ['.ttf', '.ttc']: mimetype = "application/x-truetype-font"
         elif ext == '.otf': mimetype = "application/vnd.ms-opentype"
             
         if mimetype:
@@ -179,14 +180,21 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
             if out_time_us.isdigit() and duration > 0:
                 percentage = min(100, (int(out_time_us) / 1000000 / duration) * 100)
                 now = time.time()
-                if now - last_update_time > 3:
+                
+                # FIX: Update UI only every 15 seconds to prevent Flood Error
+                if now - last_update_time > 15:
                     last_update_time = now
                     elapsed = now - start_time
                     eta_str = time.strftime('%H:%M:%S', time.gmtime((elapsed / percentage) * (100 - percentage))) if percentage > 0 else "..."
                     text = f"⚙️ Muxing Progress\n\nProgress: {percentage:.2f}%\nSpeed: {speed}\nETA: {eta_str}"
                     cancel_kbd = InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]])
-                    try: await status_msg.edit_text(text, reply_markup=cancel_kbd)
-                    except Exception: pass
+                    try: 
+                        await status_msg.edit_text(text, reply_markup=cancel_kbd)
+                    except RetryAfter as e:
+                        # FIX: Handle Telegram Rate Limits gracefully
+                        await asyncio.sleep(e.retry_after + 1)
+                    except Exception: 
+                        pass
 
     await proc.wait()
     if chat_id in active_processes: del active_processes[chat_id]
@@ -357,9 +365,14 @@ async def process_muxing_core(context, task_data, status_msg):
                 elapsed = int(time.time() - start_upload)
                 try:
                     await status_msg.edit_text(f"📤 Uploading: **{task_data['final_name']}**\n\n⏱ Elapsed Time: {elapsed} Seconds")
+                except RetryAfter as e:
+                    # FIX: Handle Telegram Rate Limits gracefully during upload
+                    await asyncio.sleep(e.retry_after + 1)
                 except Exception:
                     pass
-                await asyncio.sleep(5)
+                
+                # FIX: Check upload progress only every 15 seconds
+                await asyncio.sleep(15) 
             
             await upload_task 
             await status_msg.delete()
