@@ -8,7 +8,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
-from utils import mux_video, clean_temp_files, get_readable_time
+from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
 # --- HELPERS ---
 def humanbytes(size):
@@ -52,7 +52,6 @@ class ProgressFile(io.BufferedReader):
             except: pass
 
 async def delete_messages(bot, chat_id, message_ids):
-    """Purane messages delete karne ke liye helper function"""
     for msg_id in message_ids:
         if msg_id:
             try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
@@ -82,49 +81,43 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if ext == '.mkv':
         context.user_data.update({
-            'mkv_id': doc.file_id, 
-            'orig_name': doc.file_name, 
-            'state': 'WAIT_SUB',
-            'mkv_msg_id': update.message.message_id # MKV message ID save ki
+            'mkv_id': doc.file_id, 'orig_name': doc.file_name, 
+            'state': 'WAIT_SUB', 'mkv_msg_id': update.message.message_id
         })
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
     
     elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
         context.user_data.update({
-            'sub_id': doc.file_id, 
-            'state': 'WAIT_NAME',
-            'sub_msg_id': update.message.message_id # Subtitle message ID save ki
+            'sub_id': doc.file_id, 'state': 'WAIT_NAME', 'sub_msg_id': update.message.message_id
         })
         await update.message.reply_text("✅ Subtitle Received! Send **New Name** or /skip.")
 
 async def cmd_skip(update, context):
     if context.user_data.get('state') == 'WAIT_NAME':
-        context.user_data['name_msg_id'] = update.message.message_id # Skip command ID save ki
+        context.user_data['name_msg_id'] = update.message.message_id
         await start_task(update, context, context.user_data['orig_name'])
 
 async def handle_text(update, context):
     if context.user_data.get('state') == 'WAIT_NAME':
         name = update.message.text.strip()
         if not name.lower().endswith('.mkv'): name += '.mkv'
-        context.user_data['name_msg_id'] = update.message.message_id # Name text ID save ki
+        context.user_data['name_msg_id'] = update.message.message_id
         await start_task(update, context, name)
 
 async def start_task(update, context, final_name):
-    # Sabhi captured IDs ko ek list mein daalna
     msg_list = [
         context.user_data.get('mkv_msg_id'),
         context.user_data.get('sub_msg_id'),
         context.user_data.get('name_msg_id')
     ]
-    
     data = {
         'chat_id': update.effective_chat.id, 
         'mkv_id': context.user_data['mkv_id'], 
         'sub_id': context.user_data['sub_id'], 
         'name': final_name,
-        'to_delete': msg_list # Delete list queue ko bhej di
+        'to_delete': msg_list
     }
-    context.user_data.clear() # Data clear taaki naya task fresh start ho
+    context.user_data.clear()
     status = await update.message.reply_text("⏳ **Added to Queue...**")
     asyncio.create_task(run_queue(context, data, status))
 
@@ -134,30 +127,41 @@ async def run_queue(context, data, status):
         tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
         os.makedirs(tmp, exist_ok=True)
         out = os.path.join(tmp, data['name'])
+        thumb_path = os.path.join(tmp, "thumb.jpg")
         
         try:
             m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
             s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
             
+            # Muxing
             success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
             
             if success:
+                # Thumbnail extraction
+                await status.edit_text("🖼️ **Generating Thumbnail...**")
+                has_thumb = await extract_thumbnail(out, thumb_path)
+                
+                # Uploading
                 start_up = time.time()
-                await status.edit_text("📤 **Preparing Upload...**")
+                await status.edit_text("📤 **Uploading to Telegram...**")
                 
                 with ProgressFile(out, status, start_up) as pf:
-                    await context.bot.send_document(
-                        chat_id=data['chat_id'], 
-                        document=pf, 
-                        filename=data['name'],
-                        read_timeout=3600,
-                        write_timeout=3600
-                    )
+                    thumb_file = open(thumb_path, 'rb') if has_thumb else None
+                    try:
+                        await context.bot.send_document(
+                            chat_id=data['chat_id'], 
+                            document=pf, 
+                            thumbnail=thumb_file,
+                            caption="Muxing complete",
+                            filename=data['name'],
+                            read_timeout=3600,
+                            write_timeout=3600
+                        )
+                    finally:
+                        if thumb_file: thumb_file.close()
                 
-                # --- AUTO DELETE LOGIC ---
-                # 1. Purane messages (MKV, Sub, Name) delete karein
+                # Cleanup messages
                 await delete_messages(context.bot, data['chat_id'], data['to_delete'])
-                # 2. Status (Progress bar) message delete karein
                 await status.delete()
                 
             else:
@@ -188,7 +192,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     
-    print("--- BOT STARTED WITH AUTO-CLEANUP ---")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
