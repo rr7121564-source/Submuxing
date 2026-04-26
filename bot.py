@@ -1,4 +1,4 @@
-import os, time, asyncio, threading, json
+import os, time, asyncio, threading, json, re, shutil
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -13,6 +13,7 @@ from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbn
 # --- GLOBAL VARIABLES ---
 current_active_tasks = 0
 all_tasks = set()
+RENAME_PREF = {}  # Tracks Auto-Rename preferences (True by default)
 
 async def delete_messages(bot, chat_id, message_ids):
     for msg_id in message_ids:
@@ -20,27 +21,80 @@ async def delete_messages(bot, chat_id, message_ids):
             try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except: pass
 
-# --- CLEAR COMMAND (ALL TASK CANCEL) ---
+# --- AUTO RENAME LOGIC ---
+def auto_rename(orig_name):
+    try:
+        base_name, ext = os.path.splitext(orig_name)
+        if not ext: ext = '.mkv'
+        
+        # 1. Episode Number Nikalna
+        ep_match = re.search(r'-\s*(\d+)', base_name)
+        ep = ep_match.group(1) if ep_match else "01"
+        
+        # 2. Quality Nikalna (1080p, 720p, etc.)
+        q_match = re.search(r'(1080p|720p|480p|2160p|4k)', base_name, re.IGNORECASE)
+        quality = q_match.group(1).lower() if q_match else "1080p"
+        
+        # 3. Title Nikalna (Dash '-' se pehle ka hissa)
+        if '-' in base_name:
+            title_part = base_name.split('-')[0]
+        else:
+            title_part = base_name
+            
+        # Clean brackets (kisi bhi bracket wale text ko hatana)
+        title_part = re.sub(r'\[.*?\]', '', title_part).strip()
+        
+        # Sirf 3 se 4 words lena
+        words = title_part.split()
+        short_title = " ".join(words[:4]) if len(words) > 0 else "Video"
+        
+        return f"[E{ep}] {short_title} [{quality}] @lpxempire{ext}"
+    except Exception:
+        return orig_name
+
+async def cmd_startname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    RENAME_PREF[update.effective_user.id] = True
+    await update.message.reply_text("✅ **Auto-Rename ENABLED!**\nAb aapki files automatically smart-rename hongi.")
+
+async def cmd_stopname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    RENAME_PREF[update.effective_user.id] = False
+    await update.message.reply_text("❌ **Auto-Rename DISABLED!**\nAb files original name se hi mux hongi.")
+
+# --- CUSTOM THUMBNAIL LOGIC ---
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    photo = update.message.photo[-1] # Highest quality image lenge
+    
+    os.makedirs("user_thumbs", exist_ok=True)
+    thumb_path = f"user_thumbs/{user_id}.jpg"
+    
+    bot_msg = await update.message.reply_text("📥 **Saving Cover...**")
+    photo_file = await context.bot.get_file(photo.file_id)
+    
+    try:
+        shutil.copy(photo_file.file_path, thumb_path)
+    except Exception:
+        await photo_file.download_to_drive(thumb_path)
+        
+    await bot_msg.edit_text("🖼️ **Custom Cover Saved!**\nYe image ab aapki aane wali saari muxed files par automatically lag jayegi.")
+
+# --- CLEAR COMMAND ---
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_active_tasks, all_tasks, active_processes
-    
     for key, proc in list(active_processes.items()):
         try: proc.terminate()
         except: pass
     active_processes.clear()
-    
     for task in list(all_tasks):
         try: task.cancel()
         except: pass
         
     context.user_data.clear()
     EXTRACT_DATA.clear()
-    
     await asyncio.sleep(0.5)
     
     current_active_tasks = 0
     all_tasks.clear()
-    
     await update.message.reply_text("🗑️ **System Cleared!**\n\nAll tasks, uploads, and queues have been successfully cancelled.")
 
 # --- EXTRACTION HELPERS & HANDLERS ---
@@ -85,12 +139,10 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ffmpeg_proc.wait()
             
             if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-                # ULTRA FAST EXTRACT UPLOAD VIA FILE://
                 await context.bot.send_document(msg.chat_id, document=f"file://{out}", caption="✅ **Extracted Successfully!**")
                 await bot_msg.delete()
             else:
                 await bot_msg.edit_text("❌ **Failed to extract subtitle.**")
-                
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -140,12 +192,10 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ffmpeg_proc.wait()
         
         if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-            # ULTRA FAST EXTRACT UPLOAD VIA FILE://
             await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="✅ **Extracted!**")
             await query.message.delete()
         else:
             await query.message.edit_text("❌ **Failed to extract subtitle.**")
-            
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -170,7 +220,18 @@ async def block_duplicates(update, context):
 # --- HANDLERS ---
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n4️⃣ Reply MKV with `/extract` to extract subs.\n5️⃣ Send `/clear` to reset queue.")
+    msg = (
+        "🤖 **Pro Muxing Bot is Active!**\n\n"
+        "1️⃣ Send **MKV**.\n"
+        "2️⃣ Send **Subtitle** *(Muxing will auto-start!)*\n"
+        "3️⃣ Send an **Image** to set a Custom Cover.\n\n"
+        "⚙️ **Commands:**\n"
+        "`/startname` - Auto-Rename ON\n"
+        "`/stopname` - Auto-Rename OFF (Original Name)\n"
+        "`/extract` - Reply to MKV to get Subs\n"
+        "`/clear` - Reset System"
+    )
+    await update.message.reply_text(msg)
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
@@ -185,40 +246,37 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
     
     elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
-        context.user_data.update({
-            'sub_id': doc.file_id, 'state': 'WAIT_NAME', 'sub_msg_id': update.message.message_id
-        })
-        await update.message.reply_text("✅ Subtitle Received! Send **New Name** or /skip.")
-
-async def cmd_skip(update, context):
-    if context.user_data.get('state') == 'WAIT_NAME':
-        context.user_data['name_msg_id'] = update.message.message_id
-        await start_task(update, context, context.user_data['orig_name'])
-
-async def handle_text(update, context):
-    if context.user_data.get('state') == 'WAIT_NAME':
-        name = update.message.text.strip()
-        if not name.lower().endswith('.mkv'): name += '.mkv'
-        context.user_data['name_msg_id'] = update.message.message_id
-        await start_task(update, context, name)
+        context.user_data['sub_id'] = doc.file_id
+        context.user_data['sub_msg_id'] = update.message.message_id
+        
+        # Name generation logic
+        user_id = update.effective_user.id
+        use_auto_rename = RENAME_PREF.get(user_id, True) # True by default
+        
+        if use_auto_rename:
+            final_name = auto_rename(context.user_data['orig_name'])
+        else:
+            final_name = context.user_data['orig_name']
+            
+        # DIRECTLY start task without waiting for name message
+        await start_task(update, context, final_name)
 
 async def start_task(update, context, final_name):
     global current_active_tasks, all_tasks
     
     msg_list =[
         context.user_data.get('mkv_msg_id'),
-        context.user_data.get('sub_msg_id'),
-        context.user_data.get('name_msg_id')
+        context.user_data.get('sub_msg_id')
     ]
     data = {
         'chat_id': update.effective_chat.id, 
+        'user_id': update.effective_user.id,
         'mkv_id': context.user_data['mkv_id'], 
         'sub_id': context.user_data['sub_id'], 
         'name': final_name,
         'to_delete': msg_list
     }
     context.user_data.clear()
-    
     current_active_tasks += 1
     
     if current_active_tasks > 1:
@@ -248,6 +306,13 @@ async def run_queue(context, data, status):
             out = os.path.join(tmp, data['name'])
             thumb_path = os.path.join(tmp, "thumb.jpg")
             
+            # --- CUSTOM COVER LOGIC ---
+            custom_thumb = f"user_thumbs/{data['user_id']}.jpg"
+            has_thumb = False
+            if os.path.exists(custom_thumb):
+                shutil.copy(custom_thumb, thumb_path)
+                has_thumb = True
+            
             try:
                 m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
                 s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
@@ -256,22 +321,22 @@ async def run_queue(context, data, status):
                 success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
                 
                 if success:
-                    # 2. Extract Thumbnail
-                    await status.edit_text("🖼️ **Generating Preview...**")
-                    has_thumb = await extract_thumbnail(out, thumb_path)
+                    # Agar custom cover nahi hai, tabhi video ka preview generate karega
+                    if not has_thumb:
+                        await status.edit_text("🖼️ **Generating Preview...**")
+                        has_thumb = await extract_thumbnail(out, thumb_path)
                     
                     # 3. Uploading via Direct API Path
                     await status.edit_text("📤 **Uploading to Telegram...**\n\n⚡ _Using ultra-fast direct upload engine..._")
                     
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
                     try:
-                        # Direct upload using local file URI
                         await context.bot.send_document(
                             chat_id=data['chat_id'], 
                             document=f"file://{out}", 
                             thumbnail=thumb_file,
                             caption=f"✅ **Muxing Complete:** `{data['name']}`",
-                            read_timeout=7200,   # High timeout for heavy API uploading process
+                            read_timeout=7200,
                             write_timeout=7200
                         )
                     finally:
@@ -311,12 +376,18 @@ def main():
     
     app.add_handler(TypeHandler(Update, check_access), group=-2)
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
+    
+    # New Commands added
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("skip", cmd_skip))
+    app.add_handler(CommandHandler("startname", cmd_startname))
+    app.add_handler(CommandHandler("stopname", cmd_stopname))
     app.add_handler(CommandHandler("extract", cmd_extract))
     app.add_handler(CommandHandler("clear", cmd_clear))
+    
+    # Image Handler for Thumbnails
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
     
