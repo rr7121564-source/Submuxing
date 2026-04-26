@@ -57,71 +57,121 @@ async def delete_messages(bot, chat_id, message_ids):
             try: await bot.delete_message(chat_id, mid)
             except: pass
 
-# --- EXTRACTION ---
+# --- EXTRACTION HANDLERS ---
 async def extract_cmd(update, context):
     msg = update.message
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
         return await msg.reply_text("⚠️ Reply to an MKV file with `/extract`.")
+    
     target = msg.reply_to_message.video or msg.reply_to_message.document
     if not target.file_name.lower().endswith('.mkv'): return await msg.reply_text("⚠️ Only MKV supported.")
     
     status = await msg.reply_text("📥 **Scanning Subtitles...**")
     mkv_f = await context.bot.get_file(target.file_id)
-    streams = await get_subtitles_info(mkv_f.file_path)
-    if not streams: return await status.edit_text("❌ No subtitles found.")
     
-    user_id, base_name = update.effective_user.id, os.path.splitext(target.file_name)[0]
-
-    if len(streams) == 1: # Auto-extract if single
-        await status.edit_text("⚙️ **Extracting Single Subtitle...**")
-        idx, codec = streams[0]['index'], streams[0].get('codec_name', 'subrip')
-        ext, out = (".ass" if codec == "ass" else ".srt"), os.path.join(os.path.dirname(mkv_f.file_path), f"{base_name}.sub")
-        if await extract_sub_logic(mkv_f.file_path, idx, out):
-            with open(out, 'rb') as f: await context.bot.send_document(chat_id=msg.chat_id, document=f, filename=f"{base_name}{ext}", caption="✅ Extracted!")
-            await status.delete()
-        else: await status.edit_text("❌ Failed.")
-        if os.path.exists(out): os.remove(out)
-        return
-
+    # 1. Saare streams nikalna
+    streams = await get_subtitles_info(mkv_f.file_path)
+    if not streams: return await status.edit_text("❌ No soft-coded subtitles found.")
+    
+    user_id = update.effective_user.id
+    base_name = os.path.splitext(target.file_name)[0]
+    
+    # Session data save karein
     EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': base_name, 'streams': streams}
-    btns = [[InlineKeyboardButton(f"{LANG_MAP.get(s.get('tags',{}).get('language','und').lower(),'Unknown')} [{s.get('codec_name','SRT').upper()}]", callback_data=f"ext_{user_id}_{s['index']}")] for s in streams]
+    
+    # --- UI GENERATION ---
+    btns = []
+    for s in streams:
+        idx = s['index']
+        codec = s.get('codec_name', 'subrip')
+        tags = s.get('tags', {})
+        
+        # Priority: Language Tag > Title Tag > Index
+        lang_code = tags.get('language', 'und').lower()
+        lang_full = LANG_MAP.get(lang_code, lang_code.title())
+        title = tags.get('title')
+        
+        display_name = f"{lang_full}"
+        if title: display_name += f" - {title}"
+        
+        # Size info
+        size_bytes = tags.get('NUMBER_OF_BYTES')
+        size_text = ""
+        if size_bytes:
+            size_text = f" ({humanbytes(int(size_bytes))})"
+            
+        # Button text: "English (150 KB) [SRT]"
+        btns.append([InlineKeyboardButton(
+            f"{display_name}{size_text} [{codec.upper()}]", 
+            callback_data=f"ext_{user_id}_{idx}"
+        )])
+    
+    # "Extract All" option
     btns.append([InlineKeyboardButton("🔥 Extract All Subtitles 🔥", callback_data=f"extall_{user_id}")])
-    await status.edit_text("📂 **Select Subtitle:**", reply_markup=InlineKeyboardMarkup(btns))
+    
+    await status.edit_text(
+        f"📂 **{len(streams)} Subtitles Found!**\nChoose a language to extract:", 
+        reply_markup=InlineKeyboardMarkup(btns)
+    )
 
 async def do_extract_cb(update, context):
     query = update.callback_query
     parts = query.data.split("_")
     uid = int(parts[1])
-    if query.from_user.id != uid: return await query.answer("Denied!", show_alert=True)
+    
+    if query.from_user.id != uid: return await query.answer("Access Denied!", show_alert=True)
     data = EXTRACT_DATA.get(uid)
     if not data: return await query.message.edit_text("❌ Session Expired.")
 
+    # Action 1: Single selection
     if parts[0] == "ext":
         idx = parts[2]
-        await query.message.edit_text(f"⚙️ **Extracting Track {idx}...**")
+        await query.message.edit_text(f"⚙️ **Extracting Subtitle...**")
+        
+        # Codec check for extension
         codec = next((s.get('codec_name', 'subrip') for s in data['streams'] if str(s['index']) == idx), 'subrip')
-        out = os.path.join(os.path.dirname(data['path']), f"sub_{idx}.tmp")
+        ext = ".ass" if codec == "ass" else ".srt"
+        out = os.path.join(os.path.dirname(data['path']), f"sub_{idx}{ext}")
+        
         if await extract_sub_logic(data['path'], idx, out):
             start_up = time.time()
             with ProgressFile(out, query.message, start_up, "Uploading Subtitle") as pf:
-                await context.bot.send_document(chat_id=query.message.chat_id, document=pf, filename=f"{data['name']}_{idx}{'.ass' if codec == 'ass' else '.srt'}", caption="✅ Extracted!")
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id, 
+                    document=pf, 
+                    filename=f"{data['name']}_track_{idx}{ext}", 
+                    caption=f"✅ **Extracted Successfully!**"
+                )
             await query.message.delete()
+        else: await query.message.edit_text("❌ Extraction Failed.")
         if os.path.exists(out): os.remove(out)
+
+    # Action 2: Extract All
     elif parts[0] == "extall":
-        await query.message.edit_text("🚀 **Extracting All...**")
+        await query.message.edit_text("🚀 **Extracting All Tracks...**\nThis may take a moment.")
         for s in data['streams']:
             idx, codec = s['index'], s.get('codec_name', 'subrip')
-            out = os.path.join(os.path.dirname(data['path']), f"all_{idx}.tmp")
+            ext = ".ass" if codec == "ass" else ".srt"
+            out = os.path.join(os.path.dirname(data['path']), f"track_{idx}{ext}")
+            
             if await extract_sub_logic(data['path'], idx, out):
-                with open(out, 'rb') as f: await context.bot.send_document(chat_id=query.message.chat_id, document=f, filename=f"{data['name']}_track_{idx}{'.ass' if codec == 'ass' else '.srt'}")
+                with open(out, 'rb') as f:
+                    await context.bot.send_document(
+                        chat_id=query.message.chat_id, 
+                        document=f, 
+                        filename=f"{data['name']}_track_{idx}{ext}",
+                        caption=f"✅ Track {idx} extracted."
+                    )
                 if os.path.exists(out): os.remove(out)
-        await query.message.edit_text("✅ All Sent!")
+        
+        await query.message.edit_text("✅ **All subtitles extracted!**")
 
-# --- MUXING ---
+# --- MUXING & REST OF LOGIC (Same as before) ---
 async def check_access(update, context):
     if not update.effective_chat or not update.effective_user: return
     if update.effective_user.id == OWNER_ID: return
-    if not is_chat_auth(update.effective_chat.id) and not is_user_auth(update.effective_user.id): raise ApplicationHandlerStop()
+    if not is_chat_auth(update.effective_chat.id) and not is_user_auth(update.effective_user.id):
+        raise ApplicationHandlerStop()
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -193,10 +243,17 @@ def main():
     init_db()
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), BaseHTTPRequestHandler).serve_forever(), daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
+    
     app.add_handler(TypeHandler(Update, check_access), group=-2)
-    app.add_handler(CommandHandler("start", cmd_start)); app.add_handler(CommandHandler("extract", extract_cmd)); app.add_handler(CommandHandler("skip", cmd_skip))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs)); app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(CallbackQueryHandler(do_extract_cb, pattern="^(ext|extall)_")); app.add_handler(CallbackQueryHandler(cancel_cb, pattern="^cancel_"))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("extract", extract_cmd))
+    app.add_handler(CommandHandler("skip", cmd_skip))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CallbackQueryHandler(do_extract_cb, pattern="^(ext|extall)_"))
+    app.add_handler(CallbackQueryHandler(cancel_cb, pattern="^cancel_"))
+    
     app.run_polling(drop_pending_updates=True)
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
