@@ -9,14 +9,13 @@ import sqlite3
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.error import RetryAfter
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
 # ================================
-# SETUP & CONFIG
+# SETUP & LOGGING
 # ================================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -49,20 +48,27 @@ def is_auth(update: Update):
     return True if (u_auth or c_auth) else False
 
 # ================================
-# PROGRESS WRAPPER (FOR UPLOAD)
+# UPLOAD PROGRESS WRAPPER
 # ================================
 class ProgressFile(object):
-    def __init__(self, filename, callback, *args):
+    def __init__(self, filename, callback, status_msg, start_time):
         self._file = open(filename, 'rb')
         self._callback = callback
-        self._args = args
+        self._status_msg = status_msg
+        self._start_time = start_time
         self._total_size = os.path.getsize(filename)
         self._current_size = 0
+        self._last_update = 0
 
     def read(self, size=-1):
         data = self._file.read(size)
         self._current_size += len(data)
-        asyncio.create_task(self._callback(self._current_size, self._total_size, *self._args))
+        
+        now = time.time()
+        # Update progress every 15 seconds to avoid Telegram Flood limits
+        if now - self._last_update > 15:
+            asyncio.create_task(self._callback(self._current_size, self._total_size, self._status_msg, self._start_time))
+            self._last_update = now
         return data
 
     def close(self):
@@ -81,12 +87,6 @@ def get_prog_bar(perc):
 def human_size(bytes, units=[' bytes', ' KB', ' MB', ' GB', ' TB']):
     return str(round(bytes, 2)) + units[0] if bytes < 1024 else human_size(bytes / 1024, units[1:])
 
-def clean_temp_files(path):
-    try:
-        if os.path.isdir(path): shutil.rmtree(path)
-        elif os.path.exists(path): os.remove(path)
-    except: pass
-
 async def get_video_duration(file_path):
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
@@ -95,7 +95,7 @@ async def get_video_duration(file_path):
     except: return 0.0
 
 # ================================
-# MUXING LOGIC
+# MUXING PROGRESS LOGIC
 # ================================
 async def mux_video_live(mkv_path, sub_path, out_path, chat_id, status_msg, total_size_bytes):
     duration = await get_video_duration(mkv_path)
@@ -122,7 +122,7 @@ async def mux_video_live(mkv_path, sub_path, out_path, chat_id, status_msg, tota
         
         if line.startswith('out_time_us='):
             now = time.time()
-            if now - last_up > 10:
+            if now - last_up > 15:
                 try:
                     cur_us = int(line.split('=')[1])
                     perc = min(99.9, (cur_us / 1000000 / duration) * 100) if duration > 0 else 0
@@ -145,7 +145,24 @@ async def mux_video_live(mkv_path, sub_path, out_path, chat_id, status_msg, tota
     return proc.returncode == 0
 
 # ================================
-# BOT HANDLERS
+# UPLOAD PROGRESS CALLBACK
+# ================================
+async def upload_progress_update(current, total, status_msg, start_time):
+    now = time.time()
+    perc = (current / total) * 100
+    elapsed = now - start_time
+    speed = current / elapsed if elapsed > 0 else 0
+    text = (
+        f"Uploading start\n\n"
+        f"{get_prog_bar(perc)} {perc:.2f}%\n\n"
+        f"Speed            processing\n"
+        f"{human_size(speed)}/s     {human_size(current)} / {human_size(total)}"
+    )
+    try: await status_msg.edit_text(text)
+    except: pass
+
+# ================================
+# HANDLERS
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_auth(update): return
@@ -213,55 +230,42 @@ async def run_queue(context, data, status):
             m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
             s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
             
-            # 1. Muxing
+            # 1. MUXING
             success = await mux_video_live(m_f.file_path, s_f.file_path, out, data['chat_id'], status, data['size'])
             
             if success:
-                # 2. Auto Thumbnail
-                os.system(f"ffmpeg -y -i \"{out}\" -ss 00:00:10 -vframes 1 \"{thumb}\"")
+                # 2. AUTO THUMBNAIL
+                os.system(f'ffmpeg -y -i "{out}" -ss 00:00:10 -vframes 1 "{thumb}"')
                 
-                # 3. Upload with Progress Tracking
+                # 3. UPLOADING
                 await status.edit_text("Uploading start")
                 start_u = time.time()
-                last_up_time = 0
                 
-                async def upload_progress(current, total, status_msg, start_time):
-                    nonlocal last_up_time
-                    now = time.time()
-                    if now - last_up_time > 12: # Update every 12 seconds
-                        perc = (current / total) * 100
-                        elapsed = now - start_time
-                        speed = current / elapsed if elapsed > 0 else 0
-                        text = (
-                            f"Uploading start\n\n"
-                            f"{get_prog_bar(perc)} {perc:.2f}%\n\n"
-                            f"Speed            processing\n"
-                            f"{human_size(speed)}/s     {human_size(current)} / {human_size(total)}"
-                        )
-                        try: await status_msg.edit_text(text)
-                        except: pass
-                        last_up_time = now
-
                 th_file = open(thumb, 'rb') if os.path.exists(thumb) else None
                 try:
-                    # Use ProgressFile wrapper to track upload progress
-                    with ProgressFile(out, upload_progress, status, start_u) as pf:
+                    # Wrapped File for progress tracking
+                    with ProgressFile(out, upload_progress_update, status, start_u) as pf:
                         await context.bot.send_document(
                             chat_id=data['chat_id'],
                             document=pf,
                             thumbnail=th_file,
                             caption="muxing complete",
-                            read_timeout=3600, write_timeout=3600
+                            read_timeout=3600,
+                            write_timeout=3600
                         )
                 finally:
                     if th_file: th_file.close()
                 await status.delete()
             else: await status.edit_text("❌ Muxing Failed.")
-        except Exception as e: await status.edit_text(f"Error: {e}")
-        finally: clean_temp_files(tmp)
+        except Exception as e: 
+            await status.edit_text(f"Error: {e}")
+            logging.error(f"Task Error: {e}")
+        finally:
+            try: shutil.rmtree(tmp)
+            except: pass
 
 # ================================
-# ADMIN
+# ADMIN & SYSTEM
 # ================================
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"ID: `{update.effective_chat.id}`", parse_mode='Markdown')
@@ -275,19 +279,16 @@ async def admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "add_user" in action: conn.execute("INSERT OR IGNORE INTO auth_users VALUES (?)", (target_id,))
     elif "add_chat" in action: conn.execute("INSERT OR IGNORE INTO auth_chats VALUES (?)", (target_id,))
     conn.commit(); conn.close()
-    await update.message.reply_text("✅ Done")
+    await update.message.reply_text("✅ Authorized")
 
-# ================================
-# MAIN
-# ================================
-class HealthCheck(BaseHTTPRequestHandler):
+class Health(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
     def log_message(self, *args): pass
 
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token: return
-    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), HealthCheck).serve_forever(), daemon=True).start()
+    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 10000))), Health).serve_forever(), daemon=True).start()
 
     app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
 
@@ -298,7 +299,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    print(f"Bot Started | Session: {SESSION_ID}")
+    print(f"Bot Started | Admin: {OWNER_ID}")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
