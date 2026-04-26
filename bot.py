@@ -1,4 +1,4 @@
-import os, time, asyncio, threading, io, json
+import os, time, asyncio, threading, json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -12,49 +12,7 @@ from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbn
 
 # --- GLOBAL VARIABLES ---
 current_active_tasks = 0
-all_tasks = set() # Saare running tasks ko track karne ke liye
-
-# --- HELPERS ---
-def humanbytes(size):
-    if not size: return "0 B"
-    for unit in['B', 'KB', 'MB', 'GB', 'TB']:
-        if size < 1024: return f"{size:.2f} {unit}"
-        size /= 1024
-
-class ProgressFile(io.BufferedReader):
-    def __init__(self, filename, status_msg, start_time):
-        self._file = open(filename, 'rb')
-        super().__init__(self._file)
-        self._total_size = os.path.getsize(filename)
-        self._status_msg = status_msg
-        self._start_time = start_time
-        self._last_update = time.time()
-        self._current_size = 0
-
-    def read(self, size=-1):
-        chunk = self._file.read(size)
-        self._current_size += len(chunk)
-        now = time.time()
-        
-        if (now - self._last_update) > 5 or self._current_size == self._total_size:
-            self._last_update = now
-            asyncio.create_task(self._update_progress(self._current_size, now))
-        return chunk
-
-    async def _update_progress(self, current_size, now):
-        perc = (current_size / self._total_size) * 100
-        elapsed = now - self._start_time
-        speed = current_size / elapsed if elapsed > 0 else 0
-        eta = (self._total_size - current_size) / speed if speed > 0 else 0
-        bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
-        
-        text = (f"📤 **Uploading to Telegram...**\n\n"
-                f"P: `[{bar}]` {perc:.2f}%\n"
-                f"📂 Size: {humanbytes(current_size)} / {humanbytes(self._total_size)}\n"
-                f"🚀 Speed: {humanbytes(speed)}/s\n"
-                f"⏳ ETA: {get_readable_time(eta)}")
-        try: await self._status_msg.edit_text(text)
-        except: pass
+all_tasks = set()
 
 async def delete_messages(bot, chat_id, message_ids):
     for msg_id in message_ids:
@@ -66,25 +24,20 @@ async def delete_messages(bot, chat_id, message_ids):
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_active_tasks, all_tasks, active_processes
     
-    # 1. Stop all FFMPEG Processes (Muxing & Extracting)
     for key, proc in list(active_processes.items()):
         try: proc.terminate()
         except: pass
     active_processes.clear()
     
-    # 2. Cancel all Background Queue Tasks
     for task in list(all_tasks):
         try: task.cancel()
         except: pass
         
-    # 3. Clear temporary dictionaries/states
     context.user_data.clear()
     EXTRACT_DATA.clear()
     
-    # Wait for finally blocks to complete their cleanup
     await asyncio.sleep(0.5)
     
-    # Reset queue counter
     current_active_tasks = 0
     all_tasks.clear()
     
@@ -111,13 +64,12 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
     
-    streams = json.loads(stdout.decode()).get('streams', []) if stdout else[]
+    streams = json.loads(stdout.decode()).get('streams',[]) if stdout else[]
     if not streams: 
         return await bot_msg.edit_text("❌ No subtitles found.")
     
     base_name = os.path.splitext(target.file_name)[0]
     
-    # Single Sub Extract
     if len(streams) == 1:
         await bot_msg.edit_text("⚙️ **Extracting Single Subtitle...**")
         idx, codec = streams[0]['index'], streams[0].get('codec_name', 'subrip')
@@ -129,12 +81,12 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
             )
-            active_processes[f"ext_{user_id}"] = ffmpeg_proc # Track to cancel in /clear
+            active_processes[f"ext_{user_id}"] = ffmpeg_proc 
             await ffmpeg_proc.wait()
             
             if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-                with open(out, 'rb') as f:
-                    await context.bot.send_document(msg.chat_id, document=f, caption="✅ **Extracted Successfully!**")
+                # ULTRA FAST EXTRACT UPLOAD VIA FILE://
+                await context.bot.send_document(msg.chat_id, document=f"file://{out}", caption="✅ **Extracted Successfully!**")
                 await bot_msg.delete()
             else:
                 await bot_msg.edit_text("❌ **Failed to extract subtitle.**")
@@ -148,7 +100,6 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if os.path.exists(out): os.remove(out)
         return
 
-    # Multi Sub List
     EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': base_name, 'streams': {}}
     btns =[]
     for s in streams:
@@ -185,12 +136,12 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
         )
-        active_processes[f"ext_{uid}"] = ffmpeg_proc # Track to cancel
+        active_processes[f"ext_{uid}"] = ffmpeg_proc
         await ffmpeg_proc.wait()
         
         if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-            with open(out, 'rb') as f:
-                await context.bot.send_document(query.message.chat_id, document=f, caption="✅ **Extracted!**")
+            # ULTRA FAST EXTRACT UPLOAD VIA FILE://
+            await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="✅ **Extracted!**")
             await query.message.delete()
         else:
             await query.message.edit_text("❌ **Failed to extract subtitle.**")
@@ -270,13 +221,11 @@ async def start_task(update, context, final_name):
     
     current_active_tasks += 1
     
-    # Message Logic for Queue position
     if current_active_tasks > 1:
         status = await update.message.reply_text(f"⏳ **Added to Queue...**\n🔢 **Queue Position:** `{current_active_tasks - 1}`")
     else:
         status = await update.message.reply_text("⏳ **Processing Started...**")
         
-    # Queue me task lagana aur use track karna
     task = asyncio.create_task(run_queue(context, data, status))
     all_tasks.add(task)
     task.add_done_callback(lambda t: all_tasks.discard(t))
@@ -311,31 +260,22 @@ async def run_queue(context, data, status):
                     await status.edit_text("🖼️ **Generating Preview...**")
                     has_thumb = await extract_thumbnail(out, thumb_path)
                     
-                    # 3. Uploading
-                    start_up = time.time()
-                    total_sz = os.path.getsize(out)
-                    await status.edit_text(
-                        f"📤 **Uploading to Telegram...**\n\n"
-                        f"P: `[□□□□□□□□□□]` 0.00%\n"
-                        f"📂 Size: 0 B / {humanbytes(total_sz)}\n"
-                        f"🚀 Speed: Calculating...\n"
-                        f"⏳ ETA: Calculating..."
-                    )
+                    # 3. Uploading via Direct API Path
+                    await status.edit_text("📤 **Uploading to Telegram...**\n\n⚡ _Using ultra-fast direct upload engine..._")
                     
-                    with ProgressFile(out, status, start_up) as pf:
-                        thumb_file = open(thumb_path, 'rb') if has_thumb else None
-                        try:
-                            await context.bot.send_document(
-                                chat_id=data['chat_id'], 
-                                document=pf, 
-                                thumbnail=thumb_file,
-                                caption="Muxing complete",
-                                filename=data['name'],
-                                read_timeout=3600,
-                                write_timeout=3600
-                            )
-                        finally:
-                            if thumb_file: thumb_file.close()
+                    thumb_file = open(thumb_path, 'rb') if has_thumb else None
+                    try:
+                        # Direct upload using local file URI
+                        await context.bot.send_document(
+                            chat_id=data['chat_id'], 
+                            document=f"file://{out}", 
+                            thumbnail=thumb_file,
+                            caption=f"✅ **Muxing Complete:** `{data['name']}`",
+                            read_timeout=7200,   # High timeout for heavy API uploading process
+                            write_timeout=7200
+                        )
+                    finally:
+                        if thumb_file: thumb_file.close()
                     
                     # 4. Cleanup
                     await delete_messages(context.bot, data['chat_id'], data['to_delete'])
@@ -374,7 +314,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("extract", cmd_extract))
-    app.add_handler(CommandHandler("clear", cmd_clear))  # NAYA CLEAR COMMAND
+    app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
