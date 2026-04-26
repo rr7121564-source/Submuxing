@@ -33,6 +33,17 @@ async def get_duration(file_path):
     try: return float(stdout.decode().strip())
     except: return 0.0
 
+async def extract_thumbnail(video_path, thumb_path):
+    """Video se cover nikalna aur use 320px scale karna (Telegram requirement)"""
+    cmd = [
+        'ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, 
+        '-vf', 'scale=320:-1', # Width 320px, height auto
+        '-vframes', '1', thumb_path
+    ]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    await proc.communicate()
+    return os.path.exists(thumb_path)
+
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
     os.makedirs("fonts", exist_ok=True)
