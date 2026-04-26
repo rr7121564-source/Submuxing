@@ -51,6 +51,13 @@ class ProgressFile(io.BufferedReader):
             try: await self._status_msg.edit_text(text)
             except: pass
 
+async def delete_messages(bot, chat_id, message_ids):
+    """Purane messages delete karne ke liye helper function"""
+    for msg_id in message_ids:
+        if msg_id:
+            try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except: pass
+
 # --- MIDDLEWARES ---
 async def check_access(update, context):
     if not update.effective_chat or not update.effective_user: return
@@ -72,27 +79,52 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if not doc: return
     ext = os.path.splitext(doc.file_name)[1].lower()
+    
     if ext == '.mkv':
-        context.user_data.update({'mkv_id': doc.file_id, 'orig_name': doc.file_name, 'state': 'WAIT_SUB'})
+        context.user_data.update({
+            'mkv_id': doc.file_id, 
+            'orig_name': doc.file_name, 
+            'state': 'WAIT_SUB',
+            'mkv_msg_id': update.message.message_id # MKV message ID save ki
+        })
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
+    
     elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
-        context.user_data.update({'sub_id': doc.file_id, 'state': 'WAIT_NAME'})
+        context.user_data.update({
+            'sub_id': doc.file_id, 
+            'state': 'WAIT_NAME',
+            'sub_msg_id': update.message.message_id # Subtitle message ID save ki
+        })
         await update.message.reply_text("✅ Subtitle Received! Send **New Name** or /skip.")
 
 async def cmd_skip(update, context):
     if context.user_data.get('state') == 'WAIT_NAME':
+        context.user_data['name_msg_id'] = update.message.message_id # Skip command ID save ki
         await start_task(update, context, context.user_data['orig_name'])
 
 async def handle_text(update, context):
     if context.user_data.get('state') == 'WAIT_NAME':
         name = update.message.text.strip()
         if not name.lower().endswith('.mkv'): name += '.mkv'
+        context.user_data['name_msg_id'] = update.message.message_id # Name text ID save ki
         await start_task(update, context, name)
 
 async def start_task(update, context, final_name):
-    context.user_data['state'] = None
-    data = {'chat_id': update.effective_chat.id, 'mkv_id': context.user_data['mkv_id'], 
-            'sub_id': context.user_data['sub_id'], 'name': final_name}
+    # Sabhi captured IDs ko ek list mein daalna
+    msg_list = [
+        context.user_data.get('mkv_msg_id'),
+        context.user_data.get('sub_msg_id'),
+        context.user_data.get('name_msg_id')
+    ]
+    
+    data = {
+        'chat_id': update.effective_chat.id, 
+        'mkv_id': context.user_data['mkv_id'], 
+        'sub_id': context.user_data['sub_id'], 
+        'name': final_name,
+        'to_delete': msg_list # Delete list queue ko bhej di
+    }
+    context.user_data.clear() # Data clear taaki naya task fresh start ho
     status = await update.message.reply_text("⏳ **Added to Queue...**")
     asyncio.create_task(run_queue(context, data, status))
 
@@ -113,7 +145,6 @@ async def run_queue(context, data, status):
                 start_up = time.time()
                 await status.edit_text("📤 **Preparing Upload...**")
                 
-                # Yahan humne file:// ki jagah ProgressFile wrapper use kiya hai
                 with ProgressFile(out, status, start_up) as pf:
                     await context.bot.send_document(
                         chat_id=data['chat_id'], 
@@ -122,11 +153,18 @@ async def run_queue(context, data, status):
                         read_timeout=3600,
                         write_timeout=3600
                     )
+                
+                # --- AUTO DELETE LOGIC ---
+                # 1. Purane messages (MKV, Sub, Name) delete karein
+                await delete_messages(context.bot, data['chat_id'], data['to_delete'])
+                # 2. Status (Progress bar) message delete karein
                 await status.delete()
+                
             else:
                 await status.edit_text("❌ **Muxing Failed.**")
         except Exception as e:
-            await status.edit_text(f"❌ **Error:** {e}")
+            try: await status.edit_text(f"❌ **Error:** {e}")
+            except: pass
         finally:
             clean_temp_files(tmp)
 
@@ -150,6 +188,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     
+    print("--- BOT STARTED WITH AUTO-CLEANUP ---")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
