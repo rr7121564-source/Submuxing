@@ -27,24 +27,19 @@ def auto_rename(orig_name):
         base_name, ext = os.path.splitext(orig_name)
         if not ext: ext = '.mkv'
         
-        # 1. Episode Number Nikalna
         ep_match = re.search(r'-\s*(\d+)', base_name)
         ep = ep_match.group(1) if ep_match else "01"
         
-        # 2. Quality Nikalna (1080p, 720p, etc.)
         q_match = re.search(r'(1080p|720p|480p|2160p|4k)', base_name, re.IGNORECASE)
         quality = q_match.group(1).lower() if q_match else "1080p"
         
-        # 3. Title Nikalna (Dash '-' se pehle ka hissa)
         if '-' in base_name:
             title_part = base_name.split('-')[0]
         else:
             title_part = base_name
             
-        # Clean brackets (kisi bhi bracket wale text ko hatana)
         title_part = re.sub(r'\[.*?\]', '', title_part).strip()
         
-        # Sirf 3 se 4 words lena
         words = title_part.split()
         short_title = " ".join(words[:4]) if len(words) > 0 else "Video"
         
@@ -63,7 +58,7 @@ async def cmd_stopname(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- CUSTOM THUMBNAIL LOGIC ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    photo = update.message.photo[-1] # Highest quality image lenge
+    photo = update.message.photo[-1]
     
     os.makedirs("user_thumbs", exist_ok=True)
     thumb_path = f"user_thumbs/{user_id}.jpg"
@@ -85,19 +80,29 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: proc.terminate()
         except: pass
     active_processes.clear()
+    
     for task in list(all_tasks):
         try: task.cancel()
         except: pass
         
     context.user_data.clear()
     EXTRACT_DATA.clear()
+    
+    # Snapshot Covers Cleanups
+    try:
+        if os.path.exists("user_thumbs"):
+            for f in os.listdir("user_thumbs"):
+                if "_task_" in f:
+                    os.remove(os.path.join("user_thumbs", f))
+    except: pass
+
     await asyncio.sleep(0.5)
     
     current_active_tasks = 0
     all_tasks.clear()
-    await update.message.reply_text("🗑️ **System Cleared!**\n\nAll tasks, uploads, and queues have been successfully cancelled.")
+    await update.message.reply_text("🗑️ **System Cleared!**\n\nAll tasks, uploads, queues, and temp covers have been successfully cancelled.")
 
-# --- EXTRACTION HELPERS & HANDLERS ---
+# --- EXTRACTION LOGIC ---
 def get_lang_name(code):
     return LANG_MAP.get(code.lower(), code.title())
 
@@ -108,7 +113,9 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = msg.from_user.id
     target = msg.reply_to_message.video or msg.reply_to_message.document
-    if not target.file_name.lower().endswith('.mkv'): 
+    
+    file_name = getattr(target, 'file_name', None) or "video.mkv"
+    if not file_name.lower().endswith('.mkv'): 
         return await msg.reply_text("⚠️ Only MKV supported.")
     
     bot_msg = await msg.reply_text("📥 **Scanning Subtitles...**")
@@ -122,7 +129,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not streams: 
         return await bot_msg.edit_text("❌ No subtitles found.")
     
-    base_name = os.path.splitext(target.file_name)[0]
+    base_name = os.path.splitext(file_name)[0]
     
     if len(streams) == 1:
         await bot_msg.edit_text("⚙️ **Extracting Single Subtitle...**")
@@ -222,60 +229,88 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     msg = (
         "🤖 **Pro Muxing Bot is Active!**\n\n"
-        "1️⃣ Send **MKV**.\n"
-        "2️⃣ Send **Subtitle** *(Muxing will auto-start!)*\n"
-        "3️⃣ Send an **Image** to set a Custom Cover.\n\n"
-        "⚙️ **Commands:**\n"
-        "`/startname` - Auto-Rename ON\n"
-        "`/stopname` - Auto-Rename OFF (Original Name)\n"
-        "`/extract` - Reply to MKV to get Subs\n"
-        "`/clear` - Reset System"
+        "Send an MKV and Subtitle to begin.\n"
+        "Need help? Click here 👉 /help"
     )
     await update.message.reply_text(msg)
 
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🛠 **Bot Commands & Features** 🛠\n\n"
+        "Tap on any command below to use it:\n\n"
+        "🔹 /start - Check bot status\n"
+        "🔹 /help - Show this guide\n"
+        "🔹 /startname - 🟢 Turn ON Auto-Rename\n"
+        "🔹 /stopname - 🔴 Turn OFF Auto-Rename\n"
+        "🔹 /extract - Reply to an MKV file to get its subtitles\n"
+        "🔹 /clear - 🗑 Cancel all running tasks and reset\n\n"
+        "💡 **Pro Tips:**\n"
+        "• **Batch Send:** You can send MKV and Subtitle together at the exact same time. The bot will catch both and auto-start!\n"
+        "• **Custom Cover:** Send any Image (.jpg) to the bot to set it as a permanent Cover for all your future videos."
+    )
+    await update.message.reply_text(help_text)
+
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
+    doc = update.message.document or update.message.video
     if not doc: return
-    ext = os.path.splitext(doc.file_name)[1].lower()
+    
+    file_name = getattr(doc, 'file_name', None) or "video.mkv"
+    ext = os.path.splitext(file_name)[1].lower()
     
     if ext == '.mkv':
-        context.user_data.update({
-            'mkv_id': doc.file_id, 'orig_name': doc.file_name, 
-            'state': 'WAIT_SUB', 'mkv_msg_id': update.message.message_id
-        })
-        await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
-    
-    elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
+        context.user_data['mkv_id'] = doc.file_id
+        context.user_data['orig_name'] = file_name
+        context.user_data['mkv_msg_id'] = update.message.message_id
+        await update.message.reply_text("✅ **MKV Received!**")
+        
+    elif ext in['.srt', '.ass']:
         context.user_data['sub_id'] = doc.file_id
         context.user_data['sub_msg_id'] = update.message.message_id
+        await update.message.reply_text("✅ **Subtitle Received!**")
+    else:
+        return
         
-        # Name generation logic
+    if 'mkv_id' in context.user_data and 'sub_id' in context.user_data:
         user_id = update.effective_user.id
-        use_auto_rename = RENAME_PREF.get(user_id, True) # True by default
+        use_auto_rename = RENAME_PREF.get(user_id, True)
         
         if use_auto_rename:
             final_name = auto_rename(context.user_data['orig_name'])
         else:
             final_name = context.user_data['orig_name']
             
-        # DIRECTLY start task without waiting for name message
         await start_task(update, context, final_name)
 
 async def start_task(update, context, final_name):
     global current_active_tasks, all_tasks
     
+    user_id = update.effective_user.id
     msg_list =[
         context.user_data.get('mkv_msg_id'),
         context.user_data.get('sub_msg_id')
     ]
+    
+    # --- TAKE SNAPSHOT OF CURRENT THUMBNAIL FOR THIS TASK ---
+    os.makedirs("user_thumbs", exist_ok=True)
+    task_id = int(time.time() * 1000)
+    main_thumb = f"user_thumbs/{user_id}.jpg"
+    task_thumb = f"user_thumbs/{user_id}_task_{task_id}.jpg"
+    
+    if os.path.exists(main_thumb):
+        shutil.copy(main_thumb, task_thumb)
+    else:
+        task_thumb = None
+    
     data = {
         'chat_id': update.effective_chat.id, 
-        'user_id': update.effective_user.id,
+        'user_id': user_id,
         'mkv_id': context.user_data['mkv_id'], 
         'sub_id': context.user_data['sub_id'], 
         'name': final_name,
-        'to_delete': msg_list
+        'to_delete': msg_list,
+        'task_thumb': task_thumb # Attach the snapshot thumb path to task
     }
+    
     context.user_data.clear()
     current_active_tasks += 1
     
@@ -306,10 +341,10 @@ async def run_queue(context, data, status):
             out = os.path.join(tmp, data['name'])
             thumb_path = os.path.join(tmp, "thumb.jpg")
             
-            # --- CUSTOM COVER LOGIC ---
-            custom_thumb = f"user_thumbs/{data['user_id']}.jpg"
+            # --- USE THE SNAPSHOT THUMBNAIL ---
+            custom_thumb = data.get('task_thumb')
             has_thumb = False
-            if os.path.exists(custom_thumb):
+            if custom_thumb and os.path.exists(custom_thumb):
                 shutil.copy(custom_thumb, thumb_path)
                 has_thumb = True
             
@@ -321,7 +356,6 @@ async def run_queue(context, data, status):
                 success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
                 
                 if success:
-                    # Agar custom cover nahi hai, tabhi video ka preview generate karega
                     if not has_thumb:
                         await status.edit_text("🖼️ **Generating Preview...**")
                         has_thumb = await extract_thumbnail(out, thumb_path)
@@ -361,6 +395,12 @@ async def run_queue(context, data, status):
                 
     finally:
         current_active_tasks = max(0, current_active_tasks - 1)
+        
+        # Finally delete snapshot thumbnail from server to save space
+        custom_thumb = data.get('task_thumb')
+        if custom_thumb and os.path.exists(custom_thumb):
+            try: os.remove(custom_thumb)
+            except: pass
 
 async def cancel_cb(update, context):
     cid = update.effective_chat.id
@@ -377,17 +417,16 @@ def main():
     app.add_handler(TypeHandler(Update, check_access), group=-2)
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
     
-    # New Commands added
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help)) 
     app.add_handler(CommandHandler("startname", cmd_startname))
     app.add_handler(CommandHandler("stopname", cmd_stopname))
     app.add_handler(CommandHandler("extract", cmd_extract))
     app.add_handler(CommandHandler("clear", cmd_clear))
     
-    # Image Handler for Thumbnails
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
+    
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
     
