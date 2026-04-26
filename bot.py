@@ -14,6 +14,7 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
+# Logging Setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -21,7 +22,7 @@ logging.basicConfig(
 active_processes = {}
 
 # ================================
-# 🛡️ ULTIMATE ANTI-DUPLICATE MIDDLEWARE 🛡️
+# 🛡️ ANTI-DUPLICATE MIDDLEWARE 🛡️
 # ================================
 DB_PATH = os.path.abspath("bot_lock.db")
 
@@ -181,7 +182,6 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                 percentage = min(100, (int(out_time_us) / 1000000 / duration) * 100)
                 now = time.time()
                 
-                # FIX: Update UI only every 15 seconds to prevent Flood Error
                 if now - last_update_time > 15:
                     last_update_time = now
                     elapsed = now - start_time
@@ -191,7 +191,6 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                     try: 
                         await status_msg.edit_text(text, reply_markup=cancel_kbd)
                     except RetryAfter as e:
-                        # FIX: Handle Telegram Rate Limits gracefully
                         await asyncio.sleep(e.retry_after + 1)
                     except Exception: 
                         pass
@@ -203,38 +202,38 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # ================================
 # COMMANDS & HANDLERS
 # ================================
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
+        "1️⃣ Send an MKV file.\n"
+        "2️⃣ Send the subtitle file (.srt/.ass) directly.\n"
+        "3️⃣ /thumbnail - Set a Cover Picture.\n"
+        "4️⃣ Send New Name or /skip.\n\n"
+        "📌 Send me an MKV to begin."
+    )
+    await update.message.reply_text(msg)
+
 async def cmd_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thumb_id = context.user_data.get('thumb_id')
     if thumb_id:
-        await update.message.reply_photo(photo=thumb_id, caption="🖼️ This is your **Current Thumbnail**.\nSend a new image (photo) to replace it, or type /skip to cancel.")
+        await update.message.reply_photo(photo=thumb_id, caption="🖼️ This is your current thumbnail.\nSend a new photo to replace it.")
     else:
-        await update.message.reply_text("🖼️ You don't have a thumbnail set yet.\nSend an image (photo) now, or type /skip to cancel.")
+        await update.message.reply_text("🖼️ You don't have a thumbnail set.\nSend a photo now to set it.")
     context.user_data['state'] = 'WAITING_FOR_THUMBNAIL'
 
 async def cmd_delthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'thumb_id' in context.user_data:
         del context.user_data['thumb_id']
-        await update.message.reply_text("🗑️ Thumbnail removed successfully!")
+        await update.message.reply_text("🗑️ Thumbnail removed.")
     else:
-        await update.message.reply_text("⚠️ You don't have any thumbnail set.")
+        await update.message.reply_text("⚠️ No thumbnail to delete.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('state') == 'WAITING_FOR_THUMBNAIL':
         context.user_data['state'] = None 
         photo = update.message.photo[-1]
         context.user_data['thumb_id'] = photo.file_id
-        await update.message.reply_text("✅ Thumbnail Saved Successfully!\nIt will be auto-cropped to 1:1. Send /delthumb to remove it.")
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
-        "1️⃣ Send an MKV file.\n"
-        "2️⃣ Reply with /sub to add subtitle.\n"
-        "3️⃣ /thumbnail - Set a Cover Picture.\n"
-        "4️⃣ Add multiple tasks, I will process them one by one!\n\n"
-        "📌 Send me an MKV to begin."
-    )
-    await update.message.reply_text(msg)
+        await update.message.reply_text("✅ Thumbnail Saved!")
 
 async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get('state')
@@ -242,9 +241,6 @@ async def cmd_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = None
         original_name = context.user_data.get('original_mkv_name')
         await queue_task_start(update, context, original_name)
-    elif state == 'WAITING_FOR_THUMBNAIL':
-        context.user_data['state'] = None
-        await update.message.reply_text("❌ Thumbnail update skipped.")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('state') == 'WAITING_FOR_RENAME':
@@ -259,34 +255,31 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc: return
     ext = os.path.splitext(doc.file_name)[1].lower()
 
+    # MKV Bhejne par automatic Subtitle mangega
     if ext == '.mkv':
+        context.user_data['mkv_file_id'] = doc.file_id
         context.user_data['original_mkv_name'] = doc.file_name
-        msg = "🎥 MKV received!\n\n• To mux a subtitle: Reply to this message with /sub"
-        await update.message.reply_text(msg)
+        context.user_data['state'] = 'WAITING_FOR_SUB'
+        await update.message.reply_text("✅ MKV Received!\n\n📥 Now send the **Subtitle file (.srt or .ass)** directly.")
+
+    # Subtitle receive hone par
     elif ext in ['.srt', '.ass']:
         if context.user_data.get('state') == 'WAITING_FOR_SUB':
             context.user_data['sub_file_id'] = doc.file_id
             context.user_data['sub_file_name'] = doc.file_name
             context.user_data['state'] = 'WAITING_FOR_RENAME'
-            
-            await update.message.reply_text(
-                "✅ Subtitle received!\n\n"
-                "✏️ **Now, send a New Name for the final MKV file.** (e.g. `MyMovie_2026.mkv`)\n\n"
-                "Or simply send /skip to keep the original name."
-            )
+            await update.message.reply_text("✅ Subtitle Received!\n\n✏️ Now send a **New Name** for the MKV, or /skip.")
+        else:
+            await update.message.reply_text("⚠️ Please send the MKV file first.")
 
-async def cmd_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.reply_to_message or not msg.reply_to_message.document:
-        return await msg.reply_text("Please reply to an MKV file message with /sub.")
+        return await msg.reply_text("Reply to an MKV with /extract.")
     doc = msg.reply_to_message.document
     if not doc.file_name.lower().endswith('.mkv'):
-        return await msg.reply_text("The replied message is not an MKV file.")
-
-    context.user_data['mkv_file_id'] = doc.file_id
-    context.user_data['original_mkv_name'] = doc.file_name
-    context.user_data['state'] = 'WAITING_FOR_SUB'
-    await msg.reply_text("✅ MKV selected!\nNow upload the subtitle file (.srt or .ass).")
+        return await msg.reply_text("Not an MKV file.")
+    asyncio.create_task(process_extraction(update, context, doc))
 
 # ================================
 # QUEUE WORKER SYSTEM
@@ -299,27 +292,23 @@ async def queue_task_start(update: Update, context: ContextTypes.DEFAULT_TYPE, f
         'final_name': final_name,
         'thumb_id': context.user_data.get('thumb_id')
     }
-    
-    status_msg = await update.message.reply_text("⏳ **Added to Queue!** Please wait for your turn...")
+    status_msg = await update.message.reply_text("⏳ Added to Queue! Please wait...")
     asyncio.create_task(run_queued_process(context, task_data, status_msg))
 
 async def run_queued_process(context, task_data, status_msg):
     async with global_task_lock:
         if context.user_data.get('cancelled'):
-            await status_msg.edit_text("❌ Task was cancelled.")
+            await status_msg.edit_text("❌ Task cancelled.")
             context.user_data['cancelled'] = False
             return
-            
-        await status_msg.edit_text("⚙️ Your turn! Acquiring files...")
+        await status_msg.edit_text("⚙️ Your turn! Processing...")
         await process_muxing_core(context, task_data, status_msg)
 
 async def process_muxing_core(context, task_data, status_msg):
     chat_id = task_data['chat_id']
     ts = int(time.time())
-    
     task_dir = os.path.abspath(f"task_{chat_id}_{ts}")
     os.makedirs(task_dir, exist_ok=True)
-    
     output_mkv = os.path.join(task_dir, task_data['final_name'])
     
     thumb_path = None
@@ -329,94 +318,47 @@ async def process_muxing_core(context, task_data, status_msg):
     try:
         mkv_file = await context.bot.get_file(task_data['mkv_id'], read_timeout=3600)
         mkv_path = mkv_file.file_path 
-        
         sub_file = await context.bot.get_file(task_data['sub_id'], read_timeout=3600)
         sub_path = sub_file.file_path 
         
         if task_data['thumb_id']:
-            thumb_path = os.path.join(task_dir, "original_cover.jpg")
-            square_thumb_path = os.path.join(task_dir, "square_cover.jpg")
-            
-            thumb_file = await context.bot.get_file(task_data['thumb_id'], read_timeout=100)
-            await thumb_file.download_to_drive(thumb_path)
+            thumb_path = os.path.join(task_dir, "thumb.jpg")
+            square_thumb_path = os.path.join(task_dir, "sq_thumb.jpg")
+            t_file = await context.bot.get_file(task_data['thumb_id'])
+            await t_file.download_to_drive(thumb_path)
             await create_square_thumbnail(thumb_path, square_thumb_path)
 
-        await status_msg.edit_text("⚙️ Starting Fast Muxing...\n(Subtitle: Hinglish | Autoplay: ON)")
         success = await mux_video(mkv_path, sub_path, output_mkv, chat_id, status_msg)
 
         if success:
             file_uri = f"file://{output_mkv}"
-            start_upload = time.time()
-            
-            kwargs = {
-                'chat_id': chat_id,
-                'document': file_uri,
-                'read_timeout': 3600,
-                'write_timeout': 3600
-            }
-            
+            kwargs = {'chat_id': chat_id, 'document': file_uri, 'read_timeout': 3600, 'write_timeout': 3600}
             if square_thumb_path and os.path.exists(square_thumb_path):
                 thumb_file_obj = open(square_thumb_path, 'rb')
                 kwargs['thumbnail'] = thumb_file_obj
             
-            upload_task = asyncio.create_task(context.bot.send_document(**kwargs))
-
-            while not upload_task.done():
-                elapsed = int(time.time() - start_upload)
-                try:
-                    await status_msg.edit_text(f"📤 Uploading: **{task_data['final_name']}**\n\n⏱ Elapsed Time: {elapsed} Seconds")
-                except RetryAfter as e:
-                    # FIX: Handle Telegram Rate Limits gracefully during upload
-                    await asyncio.sleep(e.retry_after + 1)
-                except Exception:
-                    pass
-                
-                # FIX: Check upload progress only every 15 seconds
-                await asyncio.sleep(15) 
-            
-            await upload_task 
+            await status_msg.edit_text("📤 Uploading...")
+            await context.bot.send_document(**kwargs)
             await status_msg.delete()
         else:
-            if context.user_data.get('cancelled'): await status_msg.edit_text("❌ Process cancelled.")
-            else: await status_msg.edit_text("⚠️ An error occurred during muxing.")
-            
+            await status_msg.edit_text("⚠️ Muxing failed.")
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
     finally:
-        if thumb_file_obj:
-            thumb_file_obj.close()
+        if thumb_file_obj: thumb_file_obj.close()
         clean_temp_files(task_dir)
-
-async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg.reply_to_message or not msg.reply_to_message.document:
-        return await msg.reply_text("Please reply to an MKV file message with /extract.")
-    doc = msg.reply_to_message.document
-    if not doc.file_name.lower().endswith('.mkv'):
-        return await msg.reply_text("The replied message is not an MKV file.")
-
-    asyncio.create_task(process_extraction(update, context, doc))
 
 async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
     chat_id = update.effective_chat.id
-    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Acquiring MKV for extraction...")
+    status_msg = await context.bot.send_message(chat_id=chat_id, text="📥 Downloading for extraction...")
     extracted_files =[]
-
     try:
         mkv_file = await context.bot.get_file(doc.file_id, read_timeout=3600)
-        mkv_path = mkv_file.file_path 
-        
-        await status_msg.edit_text("⚙️ Extracting subtitles...")
-        extracted_files = await extract_subtitles(mkv_path, doc.file_name)
-
+        extracted_files = await extract_subtitles(mkv_file.file_path, doc.file_name)
         if not extracted_files:
-            return await status_msg.edit_text("❌ No subtitle streams found in this MKV.")
-
-        await status_msg.edit_text(f"📤 Found {len(extracted_files)} subtitles. Uploading (High Speed)...")
+            return await status_msg.edit_text("❌ No subtitles found.")
         for sub_file in extracted_files:
-            file_uri = f"file://{sub_file}"
-            await context.bot.send_document(chat_id=chat_id, document=file_uri, read_timeout=3600, write_timeout=3600)
-            
+            await context.bot.send_document(chat_id=chat_id, document=f"file://{sub_file}")
         await status_msg.delete()
     except Exception as e:
         await status_msg.edit_text(f"Error: {str(e)}")
@@ -426,23 +368,18 @@ async def process_extraction(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     chat_id = update.effective_chat.id
     if chat_id in active_processes:
         active_processes[chat_id].terminate()
         context.user_data['cancelled'] = True
-        await query.edit_message_text("🛑 Cancelling active process...")
+        await query.edit_message_text("🛑 Cancelling...")
     else:
         context.user_data['cancelled'] = True
-        await query.edit_message_text("🗑️ Cancelled waiting tasks.")
+        await query.edit_message_text("🗑️ Cancelled.")
 
-# ================================
-# MAIN ENTRY POINT
-# ================================
 def main():
     token = os.getenv("BOT_TOKEN")
     if not token: return
-
     os.makedirs("fonts", exist_ok=True)
     threading.Thread(target=run_dummy_server, args=(int(os.environ.get("PORT", 10000)),), daemon=True).start()
 
@@ -452,26 +389,21 @@ def main():
         .base_url("http://127.0.0.1:8081/bot")
         .base_file_url("http://127.0.0.1:8081/file/bot")
         .local_mode(True)
-        .connect_timeout(100).read_timeout(3600).write_timeout(3600).pool_timeout(100)
         .build()
     )
 
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("thumbnail", cmd_thumbnail))
     app.add_handler(CommandHandler("delthumb", cmd_delthumb))
-    app.add_handler(CommandHandler("sub", cmd_sub))
     app.add_handler(CommandHandler("extract", cmd_extract))
-    
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
-    
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern=r"^cancel_"))
 
-    print("Bot is up! Strict DB Middleware Queue System Active...")
+    print("Bot is up! Automatic MKV -> Sub flow active.")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
