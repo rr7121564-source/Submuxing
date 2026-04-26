@@ -82,19 +82,33 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                 cur = int(time_str) / 1000000
                 now = time.time()
                 
-                # FIX: Update delay reduced from 8s to 3s (Super Fast Refresh)
+                # Fast Update Delay (3s) for UI refresh
                 if duration > 0 and (now - last_up) > 3:
                     perc = min(100, (cur / duration) * 100)
                     elapsed = now - start_time
                     speed = cur / elapsed if elapsed > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
-                    bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
                     
-                    text = (f"⚙️ **Muxing in Progress...**\n\n"
-                            f"P: `[{bar}]` {perc:.2f}%\n"
-                            f"🚀 Speed: {speed:.2f}x\n"
-                            f"⏳ ETA: {get_readable_time(eta)}")
-                    try: await status_msg.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
+                    # 🌟 Professional Progress Bar
+                    bar_length = 15
+                    filled_blocks = int((perc / 100) * bar_length)
+                    bar = "█" * filled_blocks + "▒" * (bar_length - filled_blocks)
+                    
+                    text = (
+                        "🎬 **Processing Video...**\n"
+                        "━━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 **Progress:** `[{bar}]` **{perc:.2f}%**\n"
+                        f"⚡ **Speed:** `{speed:.2f}x`\n"
+                        f"⏱ **ETA:** `{get_readable_time(eta)}`\n"
+                        "━━━━━━━━━━━━━━━━━━━\n"
+                        "💡 _Please be patient, task is running in background._"
+                    )
+                    
+                    # Professional Cancel Button
+                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data=f"cancel_{chat_id}")]
+                    ])
+                    
+                    try: await status_msg.edit_text(text, reply_markup=cancel_markup)
                     except: pass
                     last_up = now
             except: pass
