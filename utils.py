@@ -27,7 +27,7 @@ def get_readable_time(seconds: int) -> str:
     return result or "0s"
 
 async def get_duration(file_path):
-    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
+    cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
     try: return float(stdout.decode().strip())
@@ -35,7 +35,7 @@ async def get_duration(file_path):
 
 async def extract_thumbnail(video_path, thumb_path):
     """Video se cover nikalna aur use 320px scale karna (Telegram requirement)"""
-    cmd = [
+    cmd =[
         'ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, 
         '-vf', 'scale=320:-1', # Width 320px, height auto
         '-vframes', '1', thumb_path
@@ -47,7 +47,7 @@ async def extract_thumbnail(video_path, thumb_path):
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
     os.makedirs("fonts", exist_ok=True)
-    font_args = []
+    font_args =[]
     for idx, f in enumerate(os.listdir("fonts")):
         fp = os.path.join("fonts", f)
         ext = os.path.splitext(f)[1].lower()
@@ -57,7 +57,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     sub_ext = os.path.splitext(sub_path)[1].lower()
     sub_codec = 'ass' if sub_ext == '.ass' else 'subrip'
 
-    cmd = [
+    cmd =[
         'ffmpeg', '-y', '-i', mkv_path, '-i', sub_path,
         '-map', '0:v', '-map', '0:a?', '-map', '1:0',
         '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec,
@@ -76,9 +76,14 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         line = line.decode('utf-8').strip()
         if line.startswith('out_time_us='):
             try:
-                cur = int(line.split('=')[1]) / 1000000
+                time_str = line.split('=')[1]
+                if time_str.lower() == 'n/a': continue # FFMPEG start hote waqt N/A bhejta hai, use bypass karo
+                
+                cur = int(time_str) / 1000000
                 now = time.time()
-                if duration > 0 and (now - last_up) > 8:
+                
+                # FIX: Update delay reduced from 8s to 3s (Super Fast Refresh)
+                if duration > 0 and (now - last_up) > 3:
                     perc = min(100, (cur / duration) * 100)
                     elapsed = now - start_time
                     speed = cur / elapsed if elapsed > 0 else 0
@@ -89,7 +94,8 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                             f"P: `[{bar}]` {perc:.2f}%\n"
                             f"🚀 Speed: {speed:.2f}x\n"
                             f"⏳ ETA: {get_readable_time(eta)}")
-                    await status_msg.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
+                    try: await status_msg.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
+                    except: pass
                     last_up = now
             except: pass
             
