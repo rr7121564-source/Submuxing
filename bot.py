@@ -40,6 +40,7 @@ init_db()
 
 async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update or not update.message: return
+    # Message ID aur Chat ID ke combo se unique key banayi taaki duplicate na ho
     key = f"msg_{update.message.chat_id}_{update.message.message_id}"
     conn = sqlite3.connect(DB_PATH, timeout=5)
     c = conn.cursor()
@@ -47,6 +48,7 @@ async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("INSERT INTO processed (id) VALUES (?)", (key,))
         conn.commit()
     except sqlite3.IntegrityError:
+        # Agar ID pehle se hai, toh process yahi rok do
         raise ApplicationHandlerStop()
     finally:
         conn.close()
@@ -140,7 +142,15 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear() 
-    await update.message.reply_text("🤖 **Bot Active!**\n\n1️⃣ Send MKV file.\n2️⃣ Send Subtitle file.\n3️⃣ Send New Name (or /skip).")
+    msg = (
+        "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
+        "1️⃣ Send an MKV file.\n"
+        "2️⃣ Send the subtitle file (.srt/.ass) directly.\n"
+        "3️⃣ Send New Name (or /skip).\n"
+        "4️⃣ /thumbnail - Set a Cover Picture.\n\n"
+        "📌 Send me an MKV to begin."
+    )
+    await update.message.reply_text(msg)
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
@@ -151,13 +161,13 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mkv_id'] = doc.file_id
         context.user_data['orig_name'] = doc.file_name
         context.user_data['state'] = 'WAIT_SUB'
-        await update.message.reply_text("✅ **MKV Received!**\n📥 Now send the **Subtitle (.srt/.ass)** file directly.")
+        await update.message.reply_text("✅ MKV Received!\n📥 Now send the **Subtitle (.srt/.ass)** file directly.")
 
     elif ext in ['.srt', '.ass']:
         if context.user_data.get('state') == 'WAIT_SUB':
             context.user_data['sub_id'] = doc.file_id
             context.user_data['state'] = 'WAIT_NAME'
-            await update.message.reply_text("✅ **Subtitle Received!**\n✏️ Send a **New Name** for the file or /skip.")
+            await update.message.reply_text("✅ Subtitle Received!\n✏️ Send a **New Name** for the file or /skip.")
         else:
             await update.message.reply_text("⚠️ Send MKV first.")
 
@@ -266,19 +276,27 @@ def main():
     
     threading.Thread(target=run_dummy_server, args=(int(os.environ.get("PORT", 10000)),), daemon=True).start()
 
+    # Local API server ke saath connection
     app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
 
+    # Anti-duplicate middleware
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
+    
+    # Commands
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("thumbnail", cmd_thumbnail))
     app.add_handler(CommandHandler("extract", cmd_extract))
+    
+    # Handlers
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
+    
+    # Callback
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
 
-    print("Bot Started - Corrected Version")
+    print("Bot is Starting...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
