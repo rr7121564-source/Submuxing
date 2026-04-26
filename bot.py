@@ -6,6 +6,7 @@ import logging
 import threading
 import shutil
 import sqlite3
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import RetryAfter
@@ -21,18 +22,21 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-# VERSION: 2.0_CLEAN_FLOW
+
+# Har baar bot start hone par ek unique ID generate hogi
+SESSION_ID = str(uuid.uuid4())[:8]
 active_processes = {}
 global_task_lock = asyncio.Lock()
 
 # ================================
-# 🛡️ ANTI-DUPLICATE DB 🛡️
+# 🛡️ STRICT ANTI-DUPLICATE DB 🛡️
 # ================================
 DB_PATH = os.path.abspath("bot_lock.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Unique index ensures no two same IDs can ever exist
     c.execute('CREATE TABLE IF NOT EXISTS processed (id TEXT PRIMARY KEY)')
     conn.commit()
     conn.close()
@@ -40,16 +44,29 @@ def init_db():
 init_db()
 
 async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update or not update.message: return
-    # Unique Key to prevent double response
-    key = f"msg_{update.message.chat_id}_{update.message.message_id}"
-    conn = sqlite3.connect(DB_PATH, timeout=5)
+    if not update or not update.effective_message: 
+        return
+        
+    # Unique key based on chat_id and message_id
+    msg = update.effective_message
+    key = f"{msg.chat_id}_{msg.message_id}"
+    
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO processed (id) VALUES (?)", (key,))
+        # INSERT OR IGNORE use kiya taaki error na aaye, bas insert na ho
+        c.execute("INSERT OR IGNORE INTO processed (id) VALUES (?)", (key,))
         conn.commit()
-    except sqlite3.IntegrityError:
-        raise ApplicationHandlerStop() # Stop if already processed
+        
+        # Agar koi row insert nahi hui, matlab duplicate hai
+        if c.rowcount == 0:
+            logging.info(f"[{SESSION_ID}] Duplicate blocked: {key}")
+            raise ApplicationHandlerStop()
+            
+    except ApplicationHandlerStop:
+        raise
+    except Exception as e:
+        logging.error(f"DB Error: {e}")
     finally:
         conn.close()
 
@@ -60,7 +77,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is Running Perfectly!")
+        self.wfile.write(f"Bot Session {SESSION_ID} is Running!".encode())
     def log_message(self, *args): pass
 
 def run_dummy_server(port):
@@ -119,7 +136,6 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # BOT HANDLERS
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Clears user session to avoid stuck states
     context.user_data.clear() 
     msg = (
         "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
@@ -201,7 +217,6 @@ async def run_queue(context, data, status):
                 t_path = os.path.join(tmp, "thumb.jpg")
                 tf = await context.bot.get_file(data['thumb'])
                 await tf.download_to_drive(t_raw)
-                # Quick crop to square
                 os.system(f"ffmpeg -y -i {t_raw} -vf \"crop='min(iw,ih)':'min(iw,ih)',scale=320:320\" {t_path}")
 
             success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
@@ -233,9 +248,18 @@ def main():
     
     threading.Thread(target=run_dummy_server, args=(int(os.environ.get("PORT", 10000)),), daemon=True).start()
 
-    app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
+    app = (
+        ApplicationBuilder()
+        .token(token)
+        .base_url("http://127.0.0.1:8081/bot")
+        .base_file_url("http://127.0.0.1:8081/file/bot")
+        .local_mode(True)
+        .build()
+    )
 
+    # Middleware group -1 (Sabse pehle chalega)
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
+    
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("thumbnail", cmd_thumbnail))
@@ -244,8 +268,10 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
 
-    print("--- NEW VERSION 2.0 STARTED ---")
-    app.run_polling(drop_pending_updates=True)
+    print(f"--- SESSION {SESSION_ID} STARTED ---")
+    
+    # drop_pending_updates=True purane saare messages ko delete kar dega start hote hi
+    app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     main()
