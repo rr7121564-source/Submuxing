@@ -2,6 +2,7 @@ import os
 import asyncio
 import shutil
 import time
+import json
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from config import active_processes
 
@@ -34,57 +35,46 @@ async def get_duration(file_path):
     except: return 0.0
 
 async def extract_thumbnail(video_path, thumb_path):
-    """Video se cover nikalna aur use 320px scale karna (Telegram requirement)"""
-    cmd = [
-        'ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, 
-        '-vf', 'scale=320:-1', # Width 320px, height auto
-        '-vframes', '1', thumb_path
-    ]
+    cmd = ['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
     return os.path.exists(thumb_path)
 
+async def get_subtitles(video_path):
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', video_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    stdout, _ = await proc.communicate()
+    try: return json.loads(stdout.decode()).get('streams', [])
+    except: return []
+
+async def extract_specific_subtitle(video_path, stream_index, output_path):
+    cmd = ['ffmpeg', '-y', '-i', video_path, '-map', f"0:{stream_index}", '-c:s', 'copy', output_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    await proc.wait()
+    return os.path.exists(output_path)
+
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
-    os.makedirs("fonts", exist_ok=True)
-    font_args = []
-    for idx, f in enumerate(os.listdir("fonts")):
-        fp = os.path.join("fonts", f)
-        ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
-        if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
-
     sub_ext = os.path.splitext(sub_path)[1].lower()
     sub_codec = 'ass' if sub_ext == '.ass' else 'subrip'
-
-    cmd = [
-        'ffmpeg', '-y', '-i', mkv_path, '-i', sub_path,
-        '-map', '0:v', '-map', '0:a?', '-map', '1:0',
-        '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec,
-        '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
-    ] + font_args + ['-progress', 'pipe:1', output_path]
+    
+    cmd = ['ffmpeg', '-y', '-i', mkv_path, '-i', sub_path, '-map', '0:v', '-map', '0:a?', '-map', '1:0', '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec, '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish', '-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
-    
-    start_time = time.time()
-    last_up = 0
-
+    start_time, last_up = time.time(), 0
     while True:
         line = await proc.stdout.readline()
         if not line: break
         line = line.decode('utf-8').strip()
         if line.startswith('out_time_us='):
             try:
-                cur = int(line.split('=')[1]) / 1000000
-                now = time.time()
+                cur, now = int(line.split('=')[1]) / 1000000, time.time()
                 if duration > 0 and (now - last_up) > 8:
                     perc = min(100, (cur / duration) * 100)
-                    elapsed = now - start_time
-                    speed = cur / elapsed if elapsed > 0 else 0
+                    speed = cur / (now - start_time) if (now - start_time) > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
                     bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
-                    
                     text = (f"⚙️ **Muxing in Progress...**\n\n"
                             f"P: `[{bar}]` {perc:.2f}%\n"
                             f"🚀 Speed: {speed:.2f}x\n"
@@ -92,7 +82,6 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                     await status_msg.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
                     last_up = now
             except: pass
-            
     await proc.wait()
     if chat_id in active_processes: del active_processes[chat_id]
     return proc.returncode == 0
