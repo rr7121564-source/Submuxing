@@ -21,6 +21,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+# VERSION: 2.0_CLEAN_FLOW
 active_processes = {}
 global_task_lock = asyncio.Lock()
 
@@ -40,7 +41,7 @@ init_db()
 
 async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update or not update.message: return
-    # Message ID aur Chat ID ke combo se unique key banayi taaki duplicate na ho
+    # Unique Key to prevent double response
     key = f"msg_{update.message.chat_id}_{update.message.message_id}"
     conn = sqlite3.connect(DB_PATH, timeout=5)
     c = conn.cursor()
@@ -48,8 +49,7 @@ async def block_duplicates(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("INSERT INTO processed (id) VALUES (?)", (key,))
         conn.commit()
     except sqlite3.IntegrityError:
-        # Agar ID pehle se hai, toh process yahi rok do
-        raise ApplicationHandlerStop()
+        raise ApplicationHandlerStop() # Stop if already processed
     finally:
         conn.close()
 
@@ -82,28 +82,6 @@ async def get_duration(file_path):
     stdout, _ = await proc.communicate()
     try: return float(stdout.decode().strip())
     except: return 0.0
-
-async def extract_subtitles(mkv_path, original_name):
-    cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name', '-of', 'json', mkv_path]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    stdout, _ = await proc.communicate()
-    data = json.loads(stdout.decode())
-    extracted = []
-    base = os.path.splitext(original_name)[0]
-    for stream in data.get('streams', []):
-        idx, codec = stream['index'], stream.get('codec_name', 'srt')
-        ext = ".ass" if codec == "ass" else ".srt"
-        out = os.path.abspath(f"{base}_{idx}{ext}")
-        ex_cmd = ['ffmpeg', '-y', '-i', mkv_path, '-map', f"0:{idx}", '-c:s', 'copy', out]
-        ex_proc = await asyncio.create_subprocess_exec(*ex_cmd, stderr=asyncio.subprocess.DEVNULL)
-        await ex_proc.wait()
-        if os.path.exists(out): extracted.append(out)
-    return extracted
-
-async def create_square_thumb(inp, outp):
-    cmd = ['ffmpeg', '-y', '-i', inp, '-vf', "crop='min(iw,ih)':'min(iw,ih)',scale=320:320", outp]
-    p = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.DEVNULL)
-    await p.wait()
 
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
@@ -141,6 +119,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # BOT HANDLERS
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Clears user session to avoid stuck states
     context.user_data.clear() 
     msg = (
         "🤖 Hello! I am your Queue Based Muxing Bot.\n\n"
@@ -193,21 +172,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['state'] = None
         await update.message.reply_text("✅ Thumbnail saved!")
 
-async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rep = update.message.reply_to_message
-    if not rep or not rep.document or not rep.document.file_name.endswith('.mkv'):
-        return await update.message.reply_text("Reply to an MKV with /extract")
-    
-    status = await update.message.reply_text("📥 Extracting...")
-    try:
-        m_file = await context.bot.get_file(rep.document.file_id)
-        subs = await extract_subtitles(m_file.file_path, rep.document.file_name)
-        for s in subs:
-            await context.bot.send_document(chat_id=update.effective_chat.id, document=f"file://{s}")
-            clean_temp_files(s)
-        await status.delete()
-    except Exception as e: await status.edit_text(f"Error: {e}")
-
 async def start_task(update, context, final_name):
     data = {
         'chat_id': update.effective_chat.id,
@@ -237,24 +201,17 @@ async def run_queue(context, data, status):
                 t_path = os.path.join(tmp, "thumb.jpg")
                 tf = await context.bot.get_file(data['thumb'])
                 await tf.download_to_drive(t_raw)
-                await create_square_thumb(t_raw, t_path)
+                # Quick crop to square
+                os.system(f"ffmpeg -y -i {t_raw} -vf \"crop='min(iw,ih)':'min(iw,ih)',scale=320:320\" {t_path}")
 
             success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
             if success:
                 await status.edit_text("📤 Uploading...")
-                
-                thumb_file = open(t_path, 'rb') if t_path and os.path.exists(t_path) else None
+                th = open(t_path, 'rb') if t_path and os.path.exists(t_path) else None
                 try:
-                    await context.bot.send_document(
-                        chat_id=data['chat_id'], 
-                        document=f"file://{out}", 
-                        thumbnail=thumb_file, 
-                        read_timeout=3600, 
-                        write_timeout=3600
-                    )
+                    await context.bot.send_document(chat_id=data['chat_id'], document=f"file://{out}", thumbnail=th, read_timeout=3600, write_timeout=3600)
                 finally:
-                    if thumb_file: thumb_file.close()
-                
+                    if th: th.close()
                 await status.delete()
             else: await status.edit_text("❌ Muxing Failed.")
         except Exception as e: await status.edit_text(f"Error: {e}")
@@ -276,27 +233,18 @@ def main():
     
     threading.Thread(target=run_dummy_server, args=(int(os.environ.get("PORT", 10000)),), daemon=True).start()
 
-    # Local API server ke saath connection
     app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
 
-    # Anti-duplicate middleware
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
-    
-    # Commands
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("thumbnail", cmd_thumbnail))
-    app.add_handler(CommandHandler("extract", cmd_extract))
-    
-    # Handlers
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
-    
-    # Callback
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
 
-    print("Bot is Starting...")
+    print("--- NEW VERSION 2.0 STARTED ---")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
