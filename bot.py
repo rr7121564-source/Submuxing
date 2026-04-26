@@ -90,8 +90,7 @@ def start_text():
     )
 
 def start_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📚 Help & Commands", callback_data="show_help")],[InlineKeyboardButton("🗑 Clear Background Tasks", callback_data="clear_tasks")]
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📚 Help & Commands", callback_data="show_help")],[InlineKeyboardButton("🗑 Clear Background Tasks", callback_data="clear_tasks")]
     ])
 
 def help_text():
@@ -142,7 +141,7 @@ async def perform_clear(context):
 
 async def ui_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # Button loading theek karne ke liye
+    await query.answer() 
     data = query.data
     if data == "show_help":
         await query.message.edit_text(help_text(), reply_markup=help_keyboard())
@@ -216,12 +215,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_name = getattr(target, 'file_name', None) or "video.mkv"
     if not file_name.lower().endswith('.mkv'): return await msg.reply_text("⚠️ Only MKV files are supported for extraction.")
     
-    bot_msg = await msg.reply_text(
-        "▸ Status : Extracting Subtitles\n"
-        "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-        "▸ Velocity :  --\n"
-        "▸ Remaining : --"
-    )
+    bot_msg = await msg.reply_text("▸ Extracting Subtitles")
     
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     
@@ -284,12 +278,7 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = EXTRACT_DATA.get(int(uid))
     if not data: return await query.message.edit_text("❌ Session Expired. Please extract again.")
     
-    await query.message.edit_text(
-        "▸ Status : Extracting Subtitles\n"
-        "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-        "▸ Velocity :  --\n"
-        "▸ Remaining : --"
-    )
+    await query.message.edit_text("▸ Extracting Subtitles")
     ext = data['streams'].get(idx, ".srt")
     out = os.path.abspath(f"{data['name']}_{idx}{ext}")
     try:
@@ -386,12 +375,7 @@ async def start_task(update, context, final_name):
             f"▸ Queue Position : {current_active_tasks - 1}"
         )
     else: 
-        status = await update.message.reply_text(
-            "▸ Status : Preparing for Muxing \n"
-            "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-            "▸ Velocity :  --\n"
-            "▸ Remaining : --"
-        )
+        status = await update.message.reply_text("▸ Preparing for Muxing")
         
     task = asyncio.create_task(run_queue(context, data, status))
     all_tasks.add(task)
@@ -402,12 +386,7 @@ async def run_queue(context, data, status):
     try:
         async with global_task_lock:
             try: 
-                await status.edit_text(
-                    "▸ Status : Preparing for Muxing \n"
-                    "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-                    "▸ Velocity :  --\n"
-                    "▸ Remaining : --"
-                )
+                await status.edit_text("▸ Preparing for Muxing")
             except: pass
             
             tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
@@ -428,20 +407,10 @@ async def run_queue(context, data, status):
                 
                 if success:
                     if not has_thumb:
-                        await status.edit_text(
-                            "▸ Status : Generate Thumbnail\n"
-                            "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-                            "▸ Velocity :  --\n"
-                            "▸ Remaining : --"
-                        )
+                        await status.edit_text("▸ Generating Thumbnail")
                         has_thumb = await extract_thumbnail(out, thumb_path)
                     
-                    await status.edit_text(
-                        "▸ Status : Uploading file to Telegram\n"
-                        "▸ Progress :  ▓▓▓░░░░░░░░░░\n"
-                        "▸ Velocity :  --\n"
-                        "▸ Remaining : --"
-                    )
+                    await status.edit_text("▸ Uploading file to Telegram")
                     
                     # --- DUMP FOLDER ROUTING LOGIC ---
                     dump_id = get_dump_id()
