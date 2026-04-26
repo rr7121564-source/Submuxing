@@ -38,26 +38,41 @@ async def extract_thumbnail(video_path, thumb_path):
     cmd = ['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
-    return os.path.exists(thumb_path)
+    return os.path.exists(thumb_path)async
 
 # --- ADVANCED SCANNING ---
-async def get_subtitles_info(video_path):
-    """Saare subtitle tracks ki detail nikalne ke liye"""
+ async def get_subtitles_info(video_path):
+    """Saare subtitle tracks ki detail nikalne ke liye optimized logic"""
+    if not os.path.exists(video_path):
+        return []
+
+    # Probesize aur analyze_duration ko 100MB tak limit kiya taaki CPU/RAM crash na ho
     cmd = [
         'ffprobe', '-v', 'error', 
-        '-analyze_duration', '2147483647', # Poori file analyze karein metadata ke liye
-        '-probesize', '2147483647',
+        '-analyze_duration', '100000000', # 100MB
+        '-probesize', '100000000',        # 100MB
         '-select_streams', 's', 
         '-show_entries', 'stream=index,codec_name:stream_tags=language,title,NUMBER_OF_BYTES', 
         '-of', 'json', video_path
     ]
+    
     try:
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, 
+            stdout=asyncio.subprocess.PIPE, 
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25)
+        
+        if proc.returncode != 0:
+            print(f"FFPROBE ERROR: {stderr.decode()}")
+            return []
+            
         data = json.loads(stdout.decode())
         return data.get('streams', [])
     except Exception as e:
-        print(f"DEBUG: Scan Error: {e}")
+        print(f"DEBUG SCAN ERROR: {e}")
         return []
 
 async def extract_sub_logic(video_path, stream_idx, out_path):
