@@ -77,30 +77,45 @@ def auto_rename(orig_name):
     except Exception:
         return orig_name
 
+# --- TEXTS & KEYBOARDS ---
+def start_text():
+    return (
+        "✨ **Welcome to Pro SubMuxer Bot!** ✨\n\n"
+        "I am an advanced bot designed to seamlessly merge your subtitles with MKV videos without losing quality.\n\n"
+        "📌 **How to Use:**\n"
+        "1️⃣ Send an **MKV** video file.\n"
+        "2️⃣ Send a **Subtitle** file (`.srt` or `.ass`).\n"
+        "3️⃣ Relax while I do the magic!\n\n"
+        "💡 _Click the buttons below to explore more features._"
+    )
+
+def start_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📚 Help & Commands", callback_data="show_help")],
+        [InlineKeyboardButton("🗑 Clear Background Tasks", callback_data="clear_tasks")]
+    ])
+
+def help_text():
+    return (
+        "🛠 **Bot Commands & Features** 🛠\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "🔹 /start - Check bot status\n"
+        "🔹 /startname - 🟢 Turn ON Auto-Rename\n"
+        "🔹 /stopname - 🔴 Turn OFF Auto-Rename\n"
+        "🔹 /setdump - Set a Dump Group ID\n"
+        "🔹 /deldump - Disable Dump Group\n"
+        "🔹 /extract - Reply to an MKV to extract subtitles\n"
+        "🔹 /clear - 🗑 Cancel all running tasks\n\n"
+        "💡 **Pro Tips:**\n"
+        "• **Batch Sending:** Send MKV & Subtitle together!\n"
+        "• **Custom Cover:** Send any `.jpg` image to set it as a Cover."
+    )
+
+def help_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="show_start")]
+    ])
+
 # --- COMMANDS ---
-async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        return await update.message.reply_text("⚠️ **Format:** `/setdump -100XXXXXXXXX`\nGroup ID enter karein.")
-    try:
-        dump_id = int(context.args[0])
-        set_dump_id(dump_id)
-        await update.message.reply_text(f"✅ **Dump Group Set!**\nID: `{dump_id}`\n\n⚠️ *Important:* Bot ko us group me **Admin** banayein aur **'Manage Topics'** ki permission zaroor dein!")
-    except ValueError:
-        await update.message.reply_text("❌ Invalid ID format. Make sure it's a number.")
-
-async def cmd_deldump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    set_dump_id("")
-    await update.message.reply_text("❌ **Dump Group Removed!**\nAb saari files directly aapko bot me hi milengi.")
-
-async def cmd_startname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    RENAME_PREF[update.effective_user.id] = True
-    await update.message.reply_text("✅ **Auto-Rename ENABLED!**")
-
-async def cmd_stopname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    RENAME_PREF[update.effective_user.id] = False
-    await update.message.reply_text("❌ **Auto-Rename DISABLED!**")
-
-async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def perform_clear(context):
     global current_active_tasks, all_tasks, active_processes
     for key, proc in list(active_processes.items()):
         try: proc.terminate()
@@ -124,7 +139,46 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(0.5)
     current_active_tasks = 0
     all_tasks.clear()
-    await update.message.reply_text("🗑️ **System Cleared!**")
+
+async def ui_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if data == "show_help":
+        await query.message.edit_text(help_text(), reply_markup=help_keyboard())
+    elif data == "show_start":
+        await query.message.edit_text(start_text(), reply_markup=start_keyboard())
+    elif data == "clear_tasks":
+        await perform_clear(context)
+        await query.message.edit_text(
+            "🗑️ **System Cleared Successfully!**\n_All running processes and queue have been reset._", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="show_start")]])
+        )
+
+async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.message.reply_text("⚠️ **Incorrect Format!**\n\n**Usage:** `/setdump -100XXXXXXXXX`\n_Please enter a valid Group/Channel ID._")
+    try:
+        dump_id = int(context.args[0])
+        set_dump_id(dump_id)
+        await update.message.reply_text(f"✅ **Dump Group Configured!**\n\n🆔 **ID:** `{dump_id}`\n\n⚠️ *Note:* Ensure the bot is an **Admin** in the target group and has **'Manage Topics'** permissions enabled.")
+    except ValueError:
+        await update.message.reply_text("❌ **Invalid ID Format.**\n_Make sure it is a numeric ID (e.g., -100123456789)._")
+
+async def cmd_deldump(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    set_dump_id("")
+    await update.message.reply_text("🗑️ **Dump Group Removed!**\n_Files will now be sent directly here in the bot._")
+
+async def cmd_startname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    RENAME_PREF[update.effective_user.id] = True
+    await update.message.reply_text("✅ **Auto-Rename is now ENABLED!**\n_Your files will be neatly renamed automatically._")
+
+async def cmd_stopname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    RENAME_PREF[update.effective_user.id] = False
+    await update.message.reply_text("❌ **Auto-Rename is now DISABLED!**\n_Your files will keep their original names._")
+
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await perform_clear(context)
+    await update.message.reply_text("🗑️ **System Cleared Successfully!**\n_All running processes and queue have been reset._")
 
 # --- THUMBNAIL LOGIC ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,11 +186,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
     os.makedirs("user_thumbs", exist_ok=True)
     thumb_path = f"user_thumbs/{user_id}.jpg"
-    bot_msg = await update.message.reply_text("📥 **Saving Cover...**")
+    bot_msg = await update.message.reply_text("📥 **Saving Custom Cover...**\n_Please wait..._")
     photo_file = await context.bot.get_file(photo.file_id)
     try: shutil.copy(photo_file.file_path, thumb_path)
     except: await photo_file.download_to_drive(thumb_path)
-    await bot_msg.edit_text("🖼️ **Custom Cover Saved!**")
+    await bot_msg.edit_text("🖼️ **Custom Cover Saved!**\n_This cover will be applied to your next videos._")
 
 # --- EXTRACTION LOGIC ---
 def get_lang_name(code):
@@ -145,13 +199,13 @@ def get_lang_name(code):
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to an MKV file with `/extract`.")
+        return await msg.reply_text("⚠️ **Notice:** Reply to an MKV file with `/extract` to begin.")
     user_id = msg.from_user.id
     target = msg.reply_to_message.video or msg.reply_to_message.document
     file_name = getattr(target, 'file_name', None) or "video.mkv"
-    if not file_name.lower().endswith('.mkv'): return await msg.reply_text("⚠️ Only MKV supported.")
+    if not file_name.lower().endswith('.mkv'): return await msg.reply_text("⚠️ **Format Unsupported.** Only MKV files are supported for extraction.")
     
-    bot_msg = await msg.reply_text("📥 **Scanning Subtitles...**")
+    bot_msg = await msg.reply_text("📥 **Scanning Video...**\n_Looking for built-in subtitles..._")
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     
     cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', mkv_f.file_path]
@@ -159,12 +213,12 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stdout, _ = await proc.communicate()
     
     streams = json.loads(stdout.decode()).get('streams',[]) if stdout else[]
-    if not streams: return await bot_msg.edit_text("❌ No subtitles found.")
+    if not streams: return await bot_msg.edit_text("❌ **No subtitles found in this video.**")
     
     base_name = os.path.splitext(file_name)[0]
     
     if len(streams) == 1:
-        await bot_msg.edit_text("⚙️ **Extracting Single Subtitle...**")
+        await bot_msg.edit_text("⚙️ **Extracting Subtitle...**\n_Please wait a moment._")
         idx, codec = streams[0]['index'], streams[0].get('codec_name', 'subrip')
         ext = ".ass" if codec == "ass" else ".srt"
         out = os.path.abspath(f"{base_name}{ext}")
@@ -173,7 +227,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_processes[f"ext_{user_id}"] = ffmpeg_proc 
             await ffmpeg_proc.wait()
             if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-                await context.bot.send_document(msg.chat_id, document=f"file://{out}", caption="✅ **Extracted Successfully!**")
+                await context.bot.send_document(msg.chat_id, document=f"file://{out}", caption="✅ **Extraction Complete!**")
                 await bot_msg.delete()
             else: await bot_msg.edit_text("❌ **Failed to extract subtitle.**")
         finally:
@@ -194,16 +248,26 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f" ({kb/1024:.2f} MB)" if kb > 1024 else f" ({kb:.0f} KB)"
         EXTRACT_DATA[user_id]['streams'][str(idx)] = ".ass" if codec == "ass" else ".srt"
         btns.append([InlineKeyboardButton(text, callback_data=f"ext_{user_id}_{idx}")])
-    
-    await bot_msg.edit_text("📂 **Select Language to Extract:**", reply_markup=InlineKeyboardMarkup(btns))
+        
+    btns.append([InlineKeyboardButton("❌ Cancel Extraction", callback_data=f"ext_{user_id}_cancel")])
+    await bot_msg.edit_text("📂 **Multiple Subtitles Found!**\n_Select a language to extract:_ ", reply_markup=InlineKeyboardMarkup(btns))
 
 async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    _, uid, idx = query.data.split("_")
+    parts = query.data.split("_")
+    
+    if len(parts) == 3 and parts[2] == "cancel":
+        uid = parts[1]
+        if query.from_user.id != int(uid): return await query.answer("Access Denied!", show_alert=True)
+        EXTRACT_DATA.pop(int(uid), None)
+        return await query.message.edit_text("🛑 **Extraction Process Cancelled.**")
+        
+    _, uid, idx = parts
     if query.from_user.id != int(uid): return await query.answer("Access Denied!", show_alert=True)
     data = EXTRACT_DATA.get(int(uid))
-    if not data: return await query.message.edit_text("❌ Session Expired.")
-    await query.message.edit_text("⚙️ **Extracting...**")
+    if not data: return await query.message.edit_text("❌ **Session Expired.** Please reply and extract again.")
+    
+    await query.message.edit_text("⚙️ **Extracting Subtitle...**\n_Please wait a moment._")
     ext = data['streams'].get(idx, ".srt")
     out = os.path.abspath(f"{data['name']}_{idx}{ext}")
     try:
@@ -211,7 +275,7 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_processes[f"ext_{uid}"] = ffmpeg_proc
         await ffmpeg_proc.wait()
         if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-            await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="✅ **Extracted!**")
+            await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="✅ **Extraction Complete!**")
             await query.message.delete()
         else: await query.message.edit_text("❌ **Failed to extract subtitle.**")
     finally:
@@ -232,25 +296,10 @@ async def block_duplicates(update, context):
 # --- HANDLERS ---
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    msg = ("🤖 **Pro Muxing Bot is Active!**\n\nSend an MKV and Subtitle to begin.\nNeed help? Click here 👉 /help")
-    await update.message.reply_text(msg)
+    await update.message.reply_text(start_text(), reply_markup=start_keyboard())
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "🛠 **Bot Commands & Features** 🛠\n\n"
-        "Tap on any command below to use it:\n\n"
-        "🔹 /start - Check bot status\n"
-        "🔹 /startname - 🟢 Turn ON Auto-Rename\n"
-        "🔹 /stopname - 🔴 Turn OFF Auto-Rename\n"
-        "🔹 /setdump - Set a Dump Group ID for files\n"
-        "🔹 /deldump - Disable Dump Group\n"
-        "🔹 /extract - Reply to an MKV file to get its subtitles\n"
-        "🔹 /clear - 🗑 Cancel all running tasks and reset\n\n"
-        "💡 **Pro Tips:**\n"
-        "• **Batch Send:** Send MKV and Subtitle together, bot will catch both!\n"
-        "• **Custom Cover:** Send any Image (.jpg) to set it as a Cover."
-    )
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text(), reply_markup=help_keyboard())
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document or update.message.video
@@ -262,12 +311,14 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mkv_id'] = doc.file_id
         context.user_data['orig_name'] = file_name
         context.user_data['mkv_msg_id'] = update.message.message_id
-        await update.message.reply_text("✅ **MKV Received!**")
+        if 'sub_id' not in context.user_data:
+            await update.message.reply_text("🎬 **Video Received!**\n_Please send the Subtitle file (.srt/.ass) now._")
         
     elif ext in['.srt', '.ass']:
         context.user_data['sub_id'] = doc.file_id
         context.user_data['sub_msg_id'] = update.message.message_id
-        await update.message.reply_text("✅ **Subtitle Received!**")
+        if 'mkv_id' not in context.user_data:
+            await update.message.reply_text("📝 **Subtitle Received!**\n_Please send the Video file (.mkv) now._")
     else: return
         
     if 'mkv_id' in context.user_data and 'sub_id' in context.user_data:
@@ -299,8 +350,14 @@ async def start_task(update, context, final_name):
     context.user_data.clear()
     current_active_tasks += 1
     
-    if current_active_tasks > 1: status = await update.message.reply_text(f"⏳ **Added to Queue...**\n🔢 **Queue Position:** `{current_active_tasks - 1}`")
-    else: status = await update.message.reply_text("⏳ **Processing Started...**")
+    if current_active_tasks > 1: 
+        status = await update.message.reply_text(
+            f"⏳ **Task Added to Queue...**\n"
+            f"🔢 **Queue Position:** `{current_active_tasks - 1}`\n"
+            "_Please wait for your turn._"
+        )
+    else: 
+        status = await update.message.reply_text("🔄 **Initializing Process...**")
         
     task = asyncio.create_task(run_queue(context, data, status))
     all_tasks.add(task)
@@ -310,7 +367,11 @@ async def run_queue(context, data, status):
     global current_active_tasks
     try:
         async with global_task_lock:
-            try: await status.edit_text("⚙️ **Muxing in Progress...**\n\nP: `[□□□□□□□□□□]` 0.00%\n🚀 Speed: Calculating...\n⏳ ETA: Calculating...")
+            try: 
+                await status.edit_text(
+                    "🎬 **Preparing for Muxing...**\n"
+                    "_Gathering resources and verifying files..._"
+                )
             except: pass
             
             tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
@@ -331,10 +392,15 @@ async def run_queue(context, data, status):
                 
                 if success:
                     if not has_thumb:
-                        await status.edit_text("🖼️ **Generating Preview...**")
+                        await status.edit_text("🖼️ **Generating Video Thumbnail...**\n_Hold on tight!_")
                         has_thumb = await extract_thumbnail(out, thumb_path)
                     
-                    await status.edit_text("📤 **Uploading to Telegram...**\n\n⚡ _Using ultra-fast direct upload engine..._")
+                    await status.edit_text(
+                        "📤 **Uploading File to Telegram...**\n"
+                        "━━━━━━━━━━━━━━━━━━━\n"
+                        "⚡ _Uploading via Ultra-Fast Local API server..._\n"
+                        "_This may take some time depending on file size._"
+                    )
                     
                     # --- DUMP FOLDER ROUTING LOGIC ---
                     dump_id = get_dump_id()
@@ -344,7 +410,6 @@ async def run_queue(context, data, status):
                     
                     if dump_id:
                         target_chat = dump_id
-                        # Bracket wale tags ko clean karke pehla proper alphabet dhoondo
                         core_name = re.sub(r'\[.*?\]', '', data['name']).replace('@lpxempire', '').strip()
                         match = re.search(r'[A-Za-z0-9]', core_name)
                         if match:
@@ -359,49 +424,64 @@ async def run_queue(context, data, status):
                                 save_thread_id(folder_letter, target_thread)
                             except Exception as e:
                                 print(f"Topic creation failed: {e}")
-                                target_thread = None # Fallback to general chat
+                                target_thread = None 
                     
                     # --- UPLOADING ---
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
                     try:
-                        # Upload Document attempt
                         try:
+                            cap_text = (
+                                "✅ **Muxing Complete!**\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                f"🎬 **Title:** `{data['name']}`\n"
+                                "━━━━━━━━━━━━━━━━━━━\n"
+                                "✨ _Powered by Pro Muxing Engine_"
+                            )
                             sent_msg = await context.bot.send_document(
                                 chat_id=target_chat, message_thread_id=target_thread,
                                 document=f"file://{out}", thumbnail=thumb_file,
-                                caption=f"✅ **Muxing Complete:** `{data['name']}`",
+                                caption=cap_text,
                                 read_timeout=7200, write_timeout=7200
                             )
                         except Exception as upload_err:
-                            # Agar topic delete ho gaya ho admin se, toh DB clean karke dobara normal bhejein
                             if "thread" in str(upload_err).lower() or "topic" in str(upload_err).lower():
                                 if target_thread: delete_thread_id(folder_letter)
                                 sent_msg = await context.bot.send_document(
                                     chat_id=target_chat, document=f"file://{out}", thumbnail=thumb_file,
-                                    caption=f"✅ **Muxing Complete:** `{data['name']}`",
+                                    caption=cap_text,
                                     read_timeout=7200, write_timeout=7200
                                 )
                             else: raise upload_err
                             
-                        # Success Message for User if sent to Dump
                         if target_chat != data['chat_id']:
                             await context.bot.send_message(
                                 chat_id=data['chat_id'],
-                                text=f"✅ **File Dumped Successfully!**\n📂 **Folder:** `{folder_letter}`\n🎬 **Name:** `{data['name']}`"
+                                text=(
+                                    "✅ **File Uploaded to Dump successfully!**\n"
+                                    "━━━━━━━━━━━━━━━━━━━\n"
+                                    f"📂 **Directory:** `{folder_letter}`\n"
+                                    f"🎬 **File Name:** `{data['name']}`\n"
+                                    "━━━━━━━━━━━━━━━━━━━\n"
+                                    "✨ _Thank you for using the bot!_"
+                                )
                             )
                     finally:
                         if thumb_file: thumb_file.close()
                     
                     await delete_messages(context.bot, data['chat_id'], data['to_delete'])
                     await status.delete()
-                else: await status.edit_text("❌ **Muxing Failed.**")
+                else: 
+                    await status.edit_text(
+                        "❌ **Muxing Process Failed.**\n_Please check your file integrity or try again._", 
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear Task", callback_data="clear_tasks")]])
+                    )
             
             except asyncio.CancelledError:
-                try: await status.edit_text("🚫 **Task Cancelled.**")
+                try: await status.edit_text("🚫 **Task Cancelled by User.**")
                 except: pass
                 raise
             except Exception as e:
-                try: await status.edit_text(f"❌ **Error:** {e}")
+                try: await status.edit_text(f"❌ **Error:** `{e}`")
                 except: pass
             finally: clean_temp_files(tmp)
                 
@@ -416,12 +496,15 @@ async def cancel_cb(update, context):
     cid = update.effective_chat.id
     if cid in active_processes:
         active_processes[cid].terminate()
-        await update.callback_query.edit_message_text("🛑 **Stopped.**")
+        await update.callback_query.edit_message_text(
+            "🛑 **Task Cancelled Successfully!**\n_The muxing process has been aborted._",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear All Tasks", callback_data="clear_tasks")]])
+        )
 
 # --- MAIN ---
 def main():
     init_db()
-    init_bot_db() # Nayi settings aur topics ki DB initialize
+    init_bot_db() 
     threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), BaseHTTPRequestHandler).serve_forever(), daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
     
@@ -442,6 +525,7 @@ def main():
     
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
+    app.add_handler(CallbackQueryHandler(ui_cb, pattern=r"^(show_help|show_start|clear_tasks)$"))
     
     app.run_polling(drop_pending_updates=True)
 
