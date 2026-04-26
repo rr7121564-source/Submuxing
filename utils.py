@@ -40,23 +40,14 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-# --- NIKA-MAIN LOGIC ---
 async def get_subtitles_info(video_path):
-    """Nika-main wala ffprobe scanning logic"""
-    cmd = [
-        'ffprobe', '-v', 'error', '-select_streams', 's', 
-        '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', 
-        '-of', 'json', video_path
-    ]
+    cmd = ['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', video_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
-    try:
-        return json.loads(stdout.decode()).get('streams', [])
-    except:
-        return []
+    try: return json.loads(stdout.decode()).get('streams', [])
+    except: return []
 
 async def extract_sub_logic(video_path, stream_idx, out_path):
-    """Nika-main wala ffmpeg extraction logic"""
     cmd = ['ffmpeg', '-y', '-i', video_path, '-map', f"0:{stream_idx}", '-c:s', 'copy', out_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     await proc.wait()
@@ -66,9 +57,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
     sub_ext = os.path.splitext(sub_path)[1].lower()
     sub_codec = 'ass' if sub_ext == '.ass' else 'subrip'
-    
     cmd = ['ffmpeg', '-y', '-i', mkv_path, '-i', sub_path, '-map', '0:v', '-map', '0:a?', '-map', '1:0', '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec, '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish', '-progress', 'pipe:1', output_path]
-    
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
     start_time, last_up = time.time(), 0
