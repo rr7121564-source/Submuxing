@@ -2,7 +2,6 @@ import os
 import asyncio
 import shutil
 import time
-import math
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from config import active_processes
 
@@ -16,19 +15,16 @@ def get_readable_time(seconds: int) -> str:
     result = ""
     (days, remainder) = divmod(seconds, 86400)
     days = int(days)
-    if days != 0:
-        result += f"{days}d "
+    if days != 0: result += f"{days}d "
     (hours, remainder) = divmod(remainder, 3600)
     hours = int(hours)
-    if hours != 0:
-        result += f"{hours}h "
+    if hours != 0: result += f"{hours}h "
     (minutes, seconds) = divmod(remainder, 60)
     minutes = int(minutes)
-    if minutes != 0:
-        result += f"{minutes}m "
+    if minutes != 0: result += f"{minutes}m "
     seconds = int(seconds)
     result += f"{seconds}s"
-    return result
+    return result or "0s"
 
 async def get_duration(file_path):
     cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
@@ -71,23 +67,18 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
             try:
                 cur = int(line.split('=')[1]) / 1000000
                 now = time.time()
-                if duration > 0 and (now - last_up) > 6: # Har 6 second me update
+                if duration > 0 and (now - last_up) > 8:
                     perc = min(100, (cur / duration) * 100)
-                    elapsed_time = now - start_time
-                    speed = cur / elapsed_time if elapsed_time > 0 else 0
+                    elapsed = now - start_time
+                    speed = cur / elapsed if elapsed > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
+                    bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
                     
-                    # Progress Bar Design
-                    filled = int(perc / 10)
-                    bar = "■" * filled + "□" * (10 - filled)
-                    
-                    msg = (
-                        f"⚙️ **Muxing in Progress...**\n\n"
-                        f"P: `[{bar}]` {perc:.2f}%\n"
-                        f"🚀 Speed: {speed:.2f}x\n"
-                        f"⏳ ETA: {get_readable_time(eta)}"
-                    )
-                    await status_msg.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
+                    text = (f"⚙️ **Muxing in Progress...**\n\n"
+                            f"P: `[{bar}]` {perc:.2f}%\n"
+                            f"🚀 Speed: {speed:.2f}x\n"
+                            f"⏳ ETA: {get_readable_time(eta)}")
+                    await status_msg.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
                     last_up = now
             except: pass
             
