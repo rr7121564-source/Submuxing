@@ -1,4 +1,4 @@
-import os, time, asyncio, threading, io
+import os, time, asyncio, threading, io, json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -6,14 +6,14 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
-from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes
+from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes, EXTRACT_DATA, LANG_MAP
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
 from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
 # --- HELPERS ---
 def humanbytes(size):
     if not size: return "0 B"
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
@@ -57,6 +57,91 @@ async def delete_messages(bot, chat_id, message_ids):
             try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except: pass
 
+# --- EXTRACTION HELPERS & HANDLERS ---
+def get_lang_name(code):
+    return LANG_MAP.get(code.lower(), code.title())
+
+async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
+        return await msg.reply_text("⚠️ Reply to an MKV file with `/extract`.")
+    
+    user_id = msg.from_user.id
+    target = msg.reply_to_message.video or msg.reply_to_message.document
+    if not target.file_name.lower().endswith('.mkv'): 
+        return await msg.reply_text("⚠️ Only MKV supported.")
+    
+    bot_msg = await msg.reply_text("📥 **Scanning Subtitles...**")
+    
+    mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
+    
+    cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', mkv_f.file_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    stdout, _ = await proc.communicate()
+    
+    streams = json.loads(stdout.decode()).get('streams', []) if stdout else[]
+    if not streams: 
+        return await bot_msg.edit_text("❌ No subtitles found.")
+    
+    base_name = os.path.splitext(target.file_name)[0]
+    
+    # Single Sub Extract
+    if len(streams) == 1:
+        await bot_msg.edit_text("⚙️ **Extracting Single Subtitle...**")
+        idx, codec = streams[0]['index'], streams[0].get('codec_name', 'subrip')
+        ext = ".ass" if codec == "ass" else ".srt"
+        out = os.path.abspath(f"{base_name}{ext}")
+        
+        await asyncio.create_subprocess_exec('ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out).wait()
+        
+        with open(out, 'rb') as f:
+            await context.bot.send_document(msg.chat_id, document=f, caption="✅ **Extracted Successfully!**")
+            
+        await bot_msg.delete()
+        if os.path.exists(out): os.remove(out)
+        return
+
+    # Multi Sub List
+    EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': base_name, 'streams': {}}
+    btns =[]
+    for s in streams:
+        idx, codec = s['index'], s.get('codec_name', 'subrip')
+        tags = s.get('tags', {})
+        lang = get_lang_name(tags.get('language', 'und'))
+        size = tags.get('NUMBER_OF_BYTES')
+        text = f"{lang}"
+        if size:
+            kb = int(size)/1024
+            text += f" ({kb/1024:.2f} MB)" if kb > 1024 else f" ({kb:.0f} KB)"
+        
+        EXTRACT_DATA[user_id]['streams'][str(idx)] = ".ass" if codec == "ass" else ".srt"
+        btns.append([InlineKeyboardButton(text, callback_data=f"ext_{user_id}_{idx}")])
+    
+    await bot_msg.edit_text("📂 **Select Language to Extract:**", reply_markup=InlineKeyboardMarkup(btns))
+
+async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, uid, idx = query.data.split("_")
+    if query.from_user.id != int(uid): 
+        return await query.answer("Access Denied!", show_alert=True)
+    
+    data = EXTRACT_DATA.get(int(uid))
+    if not data: 
+        return await query.message.edit_text("❌ Session Expired.")
+    
+    await query.message.edit_text("⚙️ **Extracting...**")
+    ext = data['streams'].get(idx, ".srt")
+    out = os.path.abspath(f"{data['name']}_{idx}{ext}")
+    
+    await asyncio.create_subprocess_exec('ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out).wait()
+    
+    with open(out, 'rb') as f:
+        await context.bot.send_document(query.message.chat_id, document=f, caption="✅ **Extracted!**")
+        
+    await query.message.delete()
+    if os.path.exists(out): os.remove(out)
+
+
 # --- MIDDLEWARES ---
 async def check_access(update, context):
     if not update.effective_chat or not update.effective_user: return
@@ -72,7 +157,7 @@ async def block_duplicates(update, context):
 # --- HANDLERS ---
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).")
+    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n4️⃣ Reply MKV with `/extract` to extract subs.")
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
@@ -86,7 +171,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
     
-    elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
+    elif ext in['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
         context.user_data.update({
             'sub_id': doc.file_id, 'state': 'WAIT_NAME', 'sub_msg_id': update.message.message_id
         })
@@ -105,7 +190,7 @@ async def handle_text(update, context):
         await start_task(update, context, name)
 
 async def start_task(update, context, final_name):
-    msg_list = [
+    msg_list =[
         context.user_data.get('mkv_msg_id'),
         context.user_data.get('sub_msg_id'),
         context.user_data.get('name_msg_id')
@@ -189,9 +274,11 @@ def main():
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
+    app.add_handler(CommandHandler("extract", cmd_extract))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
+    app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
     
     app.run_polling(drop_pending_updates=True)
 
