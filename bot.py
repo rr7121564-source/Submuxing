@@ -1,4 +1,4 @@
-import os, time, asyncio, threading, io
+import os, time, asyncio, threading, io, json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -8,7 +8,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes, EXTRACT_DATA, LANG_MAP
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
-from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail, get_subtitles, extract_specific_subtitle
+from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail, get_subtitles_info, extract_sub_logic
 
 # --- HELPERS ---
 def humanbytes(size):
@@ -16,9 +16,6 @@ def humanbytes(size):
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
-
-def get_lang_name(code):
-    return LANG_MAP.get(code.lower(), code.title())
 
 class ProgressFile(io.BufferedReader):
     def __init__(self, filename, status_msg, start_time, action="Uploading"):
@@ -67,32 +64,54 @@ async def check_access(update, context):
     if not is_chat_auth(update.effective_chat.id) and not is_user_auth(update.effective_user.id):
         raise ApplicationHandlerStop()
 
-# --- EXTRACTION HANDLERS ---
+# --- EXTRACTION HANDLERS (Nika Logic) ---
 async def extract_cmd(update, context):
     msg = update.message
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
         return await msg.reply_text("⚠️ Reply to an MKV file with `/extract`.")
     
     target = msg.reply_to_message.video or msg.reply_to_message.document
-    if not target.file_name.lower().endswith('.mkv'):
-        return await msg.reply_text("⚠️ Only MKV files are supported.")
+    if not target.file_name.lower().endswith('.mkv'): return await msg.reply_text("⚠️ Only MKV supported.")
     
     status = await msg.reply_text("📥 **Scanning Subtitles...**")
     mkv_f = await context.bot.get_file(target.file_id)
-    streams = await get_subtitles(mkv_f.file_path)
+    streams = await get_subtitles_info(mkv_f.file_path)
     
     if not streams: return await status.edit_text("❌ No subtitles found.")
     
+    base_name = os.path.splitext(target.file_name)[0]
     user_id = update.effective_user.id
-    EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': os.path.splitext(target.file_name)[0], 'streams': {}}
+    
+    # Case: Single Sub (Auto-Extract)
+    if len(streams) == 1:
+        await status.edit_text("⚙️ **Extracting Subtitle...**")
+        idx, codec = streams[0]['index'], streams[0].get('codec_name', 'subrip')
+        ext = ".ass" if codec == "ass" else ".srt"
+        out = os.path.join(os.path.dirname(mkv_f.file_path), f"{base_name}{ext}")
+        if await extract_sub_logic(mkv_f.file_path, idx, out):
+            start_up = time.time()
+            with ProgressFile(out, status, start_up, "Uploading Subtitle") as pf:
+                await context.bot.send_document(chat_id=msg.chat_id, document=pf, filename=f"{base_name}{ext}", caption="✅ **Extracted Successfully!**")
+            await status.delete()
+        else: await status.edit_text("❌ Extraction Failed.")
+        if os.path.exists(out): os.remove(out)
+        return
+
+    # Case: Multi Sub (Menu)
+    EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': base_name, 'streams': {}}
     btns = []
     for s in streams:
         idx, codec = s['index'], s.get('codec_name', 'subrip')
-        lang = get_lang_name(s.get('tags', {}).get('language', 'und'))
+        tags = s.get('tags', {})
+        lang = LANG_MAP.get(tags.get('language', 'und').lower(), tags.get('language', 'und').title())
+        size = tags.get('NUMBER_OF_BYTES')
+        text = f"{lang}"
+        if size: text += f" ({humanbytes(int(size))})"
+        
         EXTRACT_DATA[user_id]['streams'][str(idx)] = ".ass" if codec == "ass" else ".srt"
-        btns.append([InlineKeyboardButton(f"{lang} [{codec.upper()}]", callback_data=f"ext_{user_id}_{idx}")])
+        btns.append([InlineKeyboardButton(f"{text} [{codec.upper()}]", callback_data=f"ext_{user_id}_{idx}")])
     
-    await status.edit_text("📂 **Select Subtitle to Extract:**", reply_markup=InlineKeyboardMarkup(btns))
+    await status.edit_text("📂 **Select Language to Extract:**", reply_markup=InlineKeyboardMarkup(btns))
 
 async def do_extract_cb(update, context):
     query = update.callback_query
@@ -104,21 +123,20 @@ async def do_extract_cb(update, context):
     
     await query.message.edit_text("⚙️ **Extracting...**")
     ext = data['streams'].get(idx, ".srt")
-    out_name = f"{data['name']}{ext}"
-    out_path = os.path.join(os.path.dirname(data['path']), out_name)
+    out = os.path.join(os.path.dirname(data['path']), f"{data['name']}{ext}")
     
-    if await extract_specific_subtitle(data['path'], idx, out_path):
+    if await extract_sub_logic(data['path'], idx, out):
         start_up = time.time()
-        with ProgressFile(out_path, query.message, start_up, "Uploading Subtitle") as pf:
-            await context.bot.send_document(chat_id=query.message.chat_id, document=pf, filename=out_name, caption=f"✅ **Extracted:** `{out_name}`")
+        with ProgressFile(out, query.message, start_up, "Uploading Subtitle") as pf:
+            await context.bot.send_document(chat_id=query.message.chat_id, document=pf, filename=f"{data['name']}{ext}", caption=f"✅ **Extracted:** `{data['name']}{ext}`")
         await query.message.delete()
     else: await query.message.edit_text("❌ Extraction Failed.")
-    if os.path.exists(out_path): os.remove(out_path)
+    if os.path.exists(out): os.remove(out)
 
 # --- MUXING HANDLERS ---
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n\n💡 Use `/extract` by replying to an MKV to get subtitles.")
+    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n\n💡 Use `/extract` to get subtitles.")
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document or update.message.video
@@ -152,7 +170,7 @@ async def start_task(update, context, final_name):
 
 async def run_queue(context, data, status):
     async with global_task_lock:
-        await status.edit_text("⚙️ **Initializing...**")
+        await status.edit_text("⚙️ **Initializing Task...**")
         tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
         os.makedirs(tmp, exist_ok=True)
         out, thumb_path = os.path.join(tmp, data['name']), os.path.join(tmp, "thumb.jpg")
@@ -183,9 +201,12 @@ async def cancel_cb(update, context):
         active_processes[cid].terminate()
         await update.callback_query.edit_message_text("🛑 **Stopped.**")
 
+# --- MAIN ---
 def main():
     init_db()
+    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), BaseHTTPRequestHandler).serve_forever(), daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
+    
     app.add_handler(TypeHandler(Update, check_access), group=-2)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("extract", extract_cmd))
@@ -194,6 +215,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern="^ext_"))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern="^cancel_"))
+    
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
