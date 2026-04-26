@@ -11,9 +11,9 @@ PORT = int(os.environ.get("PORT", 10000))
 SESSION_ID = str(uuid.uuid4())[:8]
 active_processes = {}
 global_task_lock = asyncio.Lock()
-EXTRACT_DATA = {} # Extraction session storage
+EXTRACT_DATA = {} # Extraction session ke liye
 
-# Language Map
+# Nika-main wala Language Map
 LANG_MAP = {
     'eng': 'English', 'hin': 'Hindi', 'ara': 'Arabic', 'fre': 'French',
     'ger': 'German', 'ita': 'Italian', 'jpn': 'Japanese', 'spa': 'Spanish',
