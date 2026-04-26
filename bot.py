@@ -10,8 +10,9 @@ from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, acti
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
 from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
-# --- GLOBAL QUEUE COUNTER ---
+# --- GLOBAL VARIABLES ---
 current_active_tasks = 0
+all_tasks = set() # Saare running tasks ko track karne ke liye
 
 # --- HELPERS ---
 def humanbytes(size):
@@ -27,38 +28,67 @@ class ProgressFile(io.BufferedReader):
         self._total_size = os.path.getsize(filename)
         self._status_msg = status_msg
         self._start_time = start_time
-        self._last_update = 0
+        self._last_update = time.time()
         self._current_size = 0
 
     def read(self, size=-1):
         chunk = self._file.read(size)
         self._current_size += len(chunk)
-        asyncio.create_task(self._update_progress())
+        now = time.time()
+        
+        if (now - self._last_update) > 5 or self._current_size == self._total_size:
+            self._last_update = now
+            asyncio.create_task(self._update_progress(self._current_size, now))
         return chunk
 
-    async def _update_progress(self):
-        now = time.time()
-        if (now - self._last_update) > 8 or self._current_size == self._total_size:
-            self._last_update = now
-            perc = (self._current_size / self._total_size) * 100
-            elapsed = now - self._start_time
-            speed = self._current_size / elapsed if elapsed > 0 else 0
-            eta = (self._total_size - self._current_size) / speed if speed > 0 else 0
-            bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
-            
-            text = (f"📤 **Uploading to Telegram...**\n\n"
-                    f"P: `[{bar}]` {perc:.2f}%\n"
-                    f"📂 Size: {humanbytes(self._current_size)} / {humanbytes(self._total_size)}\n"
-                    f"🚀 Speed: {humanbytes(speed)}/s\n"
-                    f"⏳ ETA: {get_readable_time(eta)}")
-            try: await self._status_msg.edit_text(text)
-            except: pass
+    async def _update_progress(self, current_size, now):
+        perc = (current_size / self._total_size) * 100
+        elapsed = now - self._start_time
+        speed = current_size / elapsed if elapsed > 0 else 0
+        eta = (self._total_size - current_size) / speed if speed > 0 else 0
+        bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
+        
+        text = (f"📤 **Uploading to Telegram...**\n\n"
+                f"P: `[{bar}]` {perc:.2f}%\n"
+                f"📂 Size: {humanbytes(current_size)} / {humanbytes(self._total_size)}\n"
+                f"🚀 Speed: {humanbytes(speed)}/s\n"
+                f"⏳ ETA: {get_readable_time(eta)}")
+        try: await self._status_msg.edit_text(text)
+        except: pass
 
 async def delete_messages(bot, chat_id, message_ids):
     for msg_id in message_ids:
         if msg_id:
             try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except: pass
+
+# --- CLEAR COMMAND (ALL TASK CANCEL) ---
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_active_tasks, all_tasks, active_processes
+    
+    # 1. Stop all FFMPEG Processes (Muxing & Extracting)
+    for key, proc in list(active_processes.items()):
+        try: proc.terminate()
+        except: pass
+    active_processes.clear()
+    
+    # 2. Cancel all Background Queue Tasks
+    for task in list(all_tasks):
+        try: task.cancel()
+        except: pass
+        
+    # 3. Clear temporary dictionaries/states
+    context.user_data.clear()
+    EXTRACT_DATA.clear()
+    
+    # Wait for finally blocks to complete their cleanup
+    await asyncio.sleep(0.5)
+    
+    # Reset queue counter
+    current_active_tasks = 0
+    all_tasks.clear()
+    
+    await update.message.reply_text("🗑️ **System Cleared!**\n\nAll tasks, uploads, and queues have been successfully cancelled.")
 
 # --- EXTRACTION HELPERS & HANDLERS ---
 def get_lang_name(code):
@@ -75,7 +105,6 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text("⚠️ Only MKV supported.")
     
     bot_msg = await msg.reply_text("📥 **Scanning Subtitles...**")
-    
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     
     cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', mkv_f.file_path]
@@ -100,6 +129,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
             )
+            active_processes[f"ext_{user_id}"] = ffmpeg_proc # Track to cancel in /clear
             await ffmpeg_proc.wait()
             
             if ffmpeg_proc.returncode == 0 and os.path.exists(out):
@@ -107,11 +137,14 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(msg.chat_id, document=f, caption="✅ **Extracted Successfully!**")
                 await bot_msg.delete()
             else:
-                await bot_msg.edit_text("❌ **Failed to extract subtitle. Video might be corrupted.**")
+                await bot_msg.edit_text("❌ **Failed to extract subtitle.**")
                 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             await bot_msg.edit_text(f"❌ **Error:** `{e}`")
         finally:
+            active_processes.pop(f"ext_{user_id}", None)
             if os.path.exists(out): os.remove(out)
         return
 
@@ -152,6 +185,7 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
         )
+        active_processes[f"ext_{uid}"] = ffmpeg_proc # Track to cancel
         await ffmpeg_proc.wait()
         
         if ffmpeg_proc.returncode == 0 and os.path.exists(out):
@@ -161,9 +195,12 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.message.edit_text("❌ **Failed to extract subtitle.**")
             
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         await query.message.edit_text(f"❌ **Error:** `{e}`")
     finally:
+        active_processes.pop(f"ext_{uid}", None)
         if os.path.exists(out): os.remove(out)
 
 
@@ -182,7 +219,7 @@ async def block_duplicates(update, context):
 # --- HANDLERS ---
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n4️⃣ Reply MKV with `/extract` to extract subs.")
+    await update.message.reply_text("🤖 **Muxing Bot Active!**\n\n1️⃣ Send MKV.\n2️⃣ Send Subtitle.\n3️⃣ Send Name (or /skip).\n4️⃣ Reply MKV with `/extract` to extract subs.\n5️⃣ Send `/clear` to reset queue.")
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
@@ -215,7 +252,7 @@ async def handle_text(update, context):
         await start_task(update, context, name)
 
 async def start_task(update, context, final_name):
-    global current_active_tasks
+    global current_active_tasks, all_tasks
     
     msg_list =[
         context.user_data.get('mkv_msg_id'),
@@ -239,15 +276,22 @@ async def start_task(update, context, final_name):
     else:
         status = await update.message.reply_text("⏳ **Processing Started...**")
         
-    asyncio.create_task(run_queue(context, data, status))
+    # Queue me task lagana aur use track karna
+    task = asyncio.create_task(run_queue(context, data, status))
+    all_tasks.add(task)
+    task.add_done_callback(lambda t: all_tasks.discard(t))
 
 async def run_queue(context, data, status):
     global current_active_tasks
     try:
-        # Ye block sirf 1 time pe 1 hi chalega baaki Queue me rukenge
         async with global_task_lock:
             try:
-                await status.edit_text("⚙️ **Initializing Task...**")
+                await status.edit_text(
+                    "⚙️ **Muxing in Progress...**\n\n"
+                    "P: `[□□□□□□□□□□]` 0.00%\n"
+                    "🚀 Speed: Calculating...\n"
+                    "⏳ ETA: Calculating..."
+                )
             except: pass
             
             tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
@@ -259,20 +303,26 @@ async def run_queue(context, data, status):
                 m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
                 s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
                 
-                # 1. Muxing
+                # 1. Muxing Starts
                 success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
                 
                 if success:
-                    # 2. Extract Thumbnail (Preview)
+                    # 2. Extract Thumbnail
                     await status.edit_text("🖼️ **Generating Preview...**")
                     has_thumb = await extract_thumbnail(out, thumb_path)
                     
                     # 3. Uploading
                     start_up = time.time()
-                    await status.edit_text("📤 **Uploading Document...**")
+                    total_sz = os.path.getsize(out)
+                    await status.edit_text(
+                        f"📤 **Uploading to Telegram...**\n\n"
+                        f"P: `[□□□□□□□□□□]` 0.00%\n"
+                        f"📂 Size: 0 B / {humanbytes(total_sz)}\n"
+                        f"🚀 Speed: Calculating...\n"
+                        f"⏳ ETA: Calculating..."
+                    )
                     
                     with ProgressFile(out, status, start_up) as pf:
-                        # Thumbnail file open karein agar extract hui hai
                         thumb_file = open(thumb_path, 'rb') if has_thumb else None
                         try:
                             await context.bot.send_document(
@@ -293,6 +343,11 @@ async def run_queue(context, data, status):
                     
                 else:
                     await status.edit_text("❌ **Muxing Failed.**")
+            
+            except asyncio.CancelledError:
+                try: await status.edit_text("🚫 **Task Cancelled.**")
+                except: pass
+                raise
             except Exception as e:
                 try: await status.edit_text(f"❌ **Error:** {e}")
                 except: pass
@@ -300,8 +355,7 @@ async def run_queue(context, data, status):
                 clean_temp_files(tmp)
                 
     finally:
-        # Task puri tarah hone ke baad Queue counter kam ho jayega
-        current_active_tasks -= 1
+        current_active_tasks = max(0, current_active_tasks - 1)
 
 async def cancel_cb(update, context):
     cid = update.effective_chat.id
@@ -320,6 +374,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("skip", cmd_skip))
     app.add_handler(CommandHandler("extract", cmd_extract))
+    app.add_handler(CommandHandler("clear", cmd_clear))  # NAYA CLEAR COMMAND
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
