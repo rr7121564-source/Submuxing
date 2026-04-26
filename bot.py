@@ -1,4 +1,4 @@
-import os, time, asyncio, threading
+import os, time, asyncio, threading, io
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -10,11 +10,46 @@ from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, acti
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
 from utils import mux_video, clean_temp_files, get_readable_time
 
+# --- HELPERS ---
 def humanbytes(size):
     if not size: return "0 B"
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
+
+class ProgressFile(io.BufferedReader):
+    def __init__(self, filename, status_msg, start_time):
+        self._file = open(filename, 'rb')
+        super().__init__(self._file)
+        self._total_size = os.path.getsize(filename)
+        self._status_msg = status_msg
+        self._start_time = start_time
+        self._last_update = 0
+        self._current_size = 0
+
+    def read(self, size=-1):
+        chunk = self._file.read(size)
+        self._current_size += len(chunk)
+        asyncio.create_task(self._update_progress())
+        return chunk
+
+    async def _update_progress(self):
+        now = time.time()
+        if (now - self._last_update) > 8 or self._current_size == self._total_size:
+            self._last_update = now
+            perc = (self._current_size / self._total_size) * 100
+            elapsed = now - self._start_time
+            speed = self._current_size / elapsed if elapsed > 0 else 0
+            eta = (self._total_size - self._current_size) / speed if speed > 0 else 0
+            bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
+            
+            text = (f"📤 **Uploading to Telegram...**\n\n"
+                    f"P: `[{bar}]` {perc:.2f}%\n"
+                    f"📂 Size: {humanbytes(self._current_size)} / {humanbytes(self._total_size)}\n"
+                    f"🚀 Speed: {humanbytes(speed)}/s\n"
+                    f"⏳ ETA: {get_readable_time(eta)}")
+            try: await self._status_msg.edit_text(text)
+            except: pass
 
 # --- MIDDLEWARES ---
 async def check_access(update, context):
@@ -42,7 +77,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
     elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
         context.user_data.update({'sub_id': doc.file_id, 'state': 'WAIT_NAME'})
-        await update.message.reply_text("✅ Subtitle Received! Send **New Name** (with .mkv) or /skip.")
+        await update.message.reply_text("✅ Subtitle Received! Send **New Name** or /skip.")
 
 async def cmd_skip(update, context):
     if context.user_data.get('state') == 'WAIT_NAME':
@@ -69,17 +104,24 @@ async def run_queue(context, data, status):
         out = os.path.join(tmp, data['name'])
         
         try:
-            # Downloading
             m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
             s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
             
-            # Muxing with Progress
             success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
             
             if success:
-                f_size = os.path.getsize(out)
-                await status.edit_text(f"📤 **Uploading to Telegram...**\n📂 **Size:** {humanbytes(f_size)}")
-                await context.bot.send_document(chat_id=data['chat_id'], document=f"file://{out}", read_timeout=3600)
+                start_up = time.time()
+                await status.edit_text("📤 **Preparing Upload...**")
+                
+                # Yahan humne file:// ki jagah ProgressFile wrapper use kiya hai
+                with ProgressFile(out, status, start_up) as pf:
+                    await context.bot.send_document(
+                        chat_id=data['chat_id'], 
+                        document=pf, 
+                        filename=data['name'],
+                        read_timeout=3600,
+                        write_timeout=3600
+                    )
                 await status.delete()
             else:
                 await status.edit_text("❌ **Muxing Failed.**")
@@ -92,17 +134,12 @@ async def cancel_cb(update, context):
     cid = update.effective_chat.id
     if cid in active_processes:
         active_processes[cid].terminate()
-        await update.callback_query.edit_message_text("🛑 **Process Stopped by User.**")
+        await update.callback_query.edit_message_text("🛑 **Stopped.**")
 
-# --- WEB & MAIN ---
-class HealthCheck(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200); self.end_headers()
-        self.wfile.write(f"OK {SESSION_ID}".encode())
-
+# --- MAIN ---
 def main():
     init_db()
-    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), HealthCheck).serve_forever(), daemon=True).start()
+    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), BaseHTTPRequestHandler).serve_forever(), daemon=True).start()
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
     
     app.add_handler(TypeHandler(Update, check_access), group=-2)
@@ -113,7 +150,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     
-    print(f"--- BOT STARTED WITH PROGRESS BAR ---")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
