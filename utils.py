@@ -40,18 +40,27 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-async def get_subtitles(video_path):
-    cmd = ['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', video_path]
+# --- NIKA-MAIN LOGIC ---
+async def get_subtitles_info(video_path):
+    """Nika-main wala ffprobe scanning logic"""
+    cmd = [
+        'ffprobe', '-v', 'error', '-select_streams', 's', 
+        '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', 
+        '-of', 'json', video_path
+    ]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
-    try: return json.loads(stdout.decode()).get('streams', [])
-    except: return []
+    try:
+        return json.loads(stdout.decode()).get('streams', [])
+    except:
+        return []
 
-async def extract_specific_subtitle(video_path, stream_index, output_path):
-    cmd = ['ffmpeg', '-y', '-i', video_path, '-map', f"0:{stream_index}", '-c:s', 'copy', output_path]
+async def extract_sub_logic(video_path, stream_idx, out_path):
+    """Nika-main wala ffmpeg extraction logic"""
+    cmd = ['ffmpeg', '-y', '-i', video_path, '-map', f"0:{stream_idx}", '-c:s', 'copy', out_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     await proc.wait()
-    return os.path.exists(output_path)
+    return os.path.exists(out_path)
 
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
@@ -75,7 +84,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                     speed = cur / (now - start_time) if (now - start_time) > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
                     bar = "■" * int(perc / 10) + "□" * (10 - int(perc / 10))
-                    text = (f"⚙️ **Muxing in Progress...**\n\n"
+                    text = (f"⚙️ **Muxing...**\n\n"
                             f"P: `[{bar}]` {perc:.2f}%\n"
                             f"🚀 Speed: {speed:.2f}x\n"
                             f"⏳ ETA: {get_readable_time(eta)}")
