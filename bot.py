@@ -1,4 +1,4 @@
-import os, time, asyncio, threading, json, re, shutil, sqlite3
+import os, time, asyncio, threading, json, re, shutil, sqlite3, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -8,7 +8,8 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes, EXTRACT_DATA, LANG_MAP
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
-from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
+# Ensure you renamed utils.py to bot_utils.py as discussed earlier
+from bot_utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
 # --- GLOBAL VARIABLES & DB ---
 current_active_tasks = 0
@@ -73,7 +74,7 @@ def auto_rename(orig_name):
         words = title_part.split()
         short_title = " ".join(words[:4]) if len(words) > 0 else "Video"
         
-        return f"[E{ep}] {short_title} [{quality}] @lpxempire{ext}"
+        return f"[E{ep}] {short_title}[{quality}] @lpxempire{ext}"
     except Exception:
         return orig_name
 
@@ -313,7 +314,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'sub_id' not in context.user_data:
             await update.message.reply_text("🎬 **Video Received!**\n_Please send the Subtitle file (.srt/.ass) now._")
         
-    elif ext in['.srt', '.ass']:
+    elif ext in ['.srt', '.ass']:
         context.user_data['sub_id'] = doc.file_id
         context.user_data['sub_msg_id'] = update.message.message_id
         if 'mkv_id' not in context.user_data:
@@ -500,7 +501,7 @@ async def cancel_cb(update, context):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear All Tasks", callback_data="clear_tasks")]])
         )
 
-# --- DUMMY HTTP SERVER (FOR UPTIME ROBOT) ---
+# --- WEB SERVER & SELF PINGER (ANTI-SLEEP) ---
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -509,8 +510,7 @@ class PingHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is awake and running!")
         
     def log_message(self, format, *args):
-        # Ping logs ko console me bar-bar print hone se rokne ke liye
-        pass
+        pass # Stop useless logging
 
 def run_dummy_server():
     try:
@@ -520,13 +520,37 @@ def run_dummy_server():
     except Exception as e:
         print(f"❌ Web Server Error: {e}")
 
+def self_pinger():
+    """Ye function bot ko render par lagatar sleep hone se rokega"""
+    # Render automatically creates 'RENDER_EXTERNAL_URL' env variable for your web app
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    
+    if not render_url:
+        print("⚠️ 'RENDER_EXTERNAL_URL' not found. Self-ping won't work perfectly locally, but will work on Render.")
+        render_url = f"http://127.0.0.1:{PORT}"
+
+    print(f"🔄 Self-Pinger Target URL: {render_url}")
+
+    while True:
+        try:
+            # Har 5 minute (300 seconds) me request bhejega
+            time.sleep(300)
+            req = urllib.request.Request(render_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                pass # Successfully pinged
+        except Exception as e:
+            print(f"❌ Self-Ping Error: {e}")
+
 # --- MAIN ---
 def main():
     init_db()
     init_bot_db() 
     
-    # Run the dummy server in background
+    # 1. Start background web server
     threading.Thread(target=run_dummy_server, daemon=True).start()
+    
+    # 2. Start background self-pinger (anti-sleep)
+    threading.Thread(target=self_pinger, daemon=True).start()
     
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
     
