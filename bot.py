@@ -13,7 +13,7 @@ from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbn
 # --- HELPERS ---
 def humanbytes(size):
     if not size: return "0 B"
-    for unit in['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
@@ -92,13 +92,25 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ext = ".ass" if codec == "ass" else ".srt"
         out = os.path.abspath(f"{base_name}{ext}")
         
-        await asyncio.create_subprocess_exec('ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out).wait()
-        
-        with open(out, 'rb') as f:
-            await context.bot.send_document(msg.chat_id, document=f, caption="✅ **Extracted Successfully!**")
+        try:
+            # FIX: Execute wait properly
+            ffmpeg_proc = await asyncio.create_subprocess_exec(
+                'ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            )
+            await ffmpeg_proc.wait()
             
-        await bot_msg.delete()
-        if os.path.exists(out): os.remove(out)
+            if ffmpeg_proc.returncode == 0 and os.path.exists(out):
+                with open(out, 'rb') as f:
+                    await context.bot.send_document(msg.chat_id, document=f, caption="✅ **Extracted Successfully!**")
+                await bot_msg.delete()
+            else:
+                await bot_msg.edit_text("❌ **Failed to extract subtitle. Video might be corrupted.**")
+                
+        except Exception as e:
+            await bot_msg.edit_text(f"❌ **Error:** `{e}`")
+        finally:
+            if os.path.exists(out): os.remove(out)
         return
 
     # Multi Sub List
@@ -133,13 +145,25 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ext = data['streams'].get(idx, ".srt")
     out = os.path.abspath(f"{data['name']}_{idx}{ext}")
     
-    await asyncio.create_subprocess_exec('ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out).wait()
-    
-    with open(out, 'rb') as f:
-        await context.bot.send_document(query.message.chat_id, document=f, caption="✅ **Extracted!**")
+    try:
+        # FIX: Execute wait properly
+        ffmpeg_proc = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+        await ffmpeg_proc.wait()
         
-    await query.message.delete()
-    if os.path.exists(out): os.remove(out)
+        if ffmpeg_proc.returncode == 0 and os.path.exists(out):
+            with open(out, 'rb') as f:
+                await context.bot.send_document(query.message.chat_id, document=f, caption="✅ **Extracted!**")
+            await query.message.delete()
+        else:
+            await query.message.edit_text("❌ **Failed to extract subtitle.**")
+            
+    except Exception as e:
+        await query.message.edit_text(f"❌ **Error:** `{e}`")
+    finally:
+        if os.path.exists(out): os.remove(out)
 
 
 # --- MIDDLEWARES ---
@@ -171,7 +195,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         await update.message.reply_text("✅ MKV Received! Now send **Subtitle (.srt/.ass)**.")
     
-    elif ext in['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
+    elif ext in ['.srt', '.ass'] and context.user_data.get('state') == 'WAIT_SUB':
         context.user_data.update({
             'sub_id': doc.file_id, 'state': 'WAIT_NAME', 'sub_msg_id': update.message.message_id
         })
@@ -237,7 +261,7 @@ async def run_queue(context, data, status):
                         await context.bot.send_document(
                             chat_id=data['chat_id'], 
                             document=pf, 
-                            thumbnail=thumb_file, # Ye document icon ki jagah show hoga
+                            thumbnail=thumb_file,
                             caption="Muxing complete",
                             filename=data['name'],
                             read_timeout=3600,
