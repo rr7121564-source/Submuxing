@@ -35,24 +35,30 @@ async def get_duration(file_path):
     except: return 0.0
 
 async def extract_thumbnail(video_path, thumb_path):
-    # Scale=320 is required for Telegram Document Preview
     cmd = ['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
     return os.path.exists(thumb_path)
 
+# --- ADVANCED SCANNING ---
 async def get_subtitles_info(video_path):
-    # Optimized scan with Analyze Duration & Probesize limit
+    """Saare subtitle tracks ki detail nikalne ke liye"""
     cmd = [
-        'ffprobe', '-v', 'error', '-analyze_duration', '1000000', '-probesize', '1000000',
-        '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', 
+        'ffprobe', '-v', 'error', 
+        '-analyze_duration', '2147483647', # Poori file analyze karein metadata ke liye
+        '-probesize', '2147483647',
+        '-select_streams', 's', 
+        '-show_entries', 'stream=index,codec_name:stream_tags=language,title,NUMBER_OF_BYTES', 
         '-of', 'json', video_path
     ]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
-        return json.loads(stdout.decode()).get('streams', [])
-    except: return []
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        data = json.loads(stdout.decode())
+        return data.get('streams', [])
+    except Exception as e:
+        print(f"DEBUG: Scan Error: {e}")
+        return []
 
 async def extract_sub_logic(video_path, stream_idx, out_path):
     cmd = ['ffmpeg', '-y', '-i', video_path, '-map', f"0:{stream_idx}", '-c:s', 'copy', out_path]
@@ -64,9 +70,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     duration = await get_duration(mkv_path)
     sub_ext = os.path.splitext(sub_path)[1].lower()
     sub_codec = 'ass' if sub_ext == '.ass' else 'subrip'
-    
     cmd = ['ffmpeg', '-y', '-i', mkv_path, '-i', sub_path, '-map', '0:v', '-map', '0:a?', '-map', '1:0', '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec, '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish', '-progress', 'pipe:1', output_path]
-    
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
     start_time, last_up = time.time(), 0
