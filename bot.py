@@ -439,13 +439,7 @@ async def run_queue(context, data, status):
                     # --- UPLOADING ---
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
                     try:
-                        clean_name = data['name']
-                        if clean_name.endswith('.mkv'): clean_name = clean_name[:-4]
-                        
-                        cap_text = (
-                            f"✅  MUXING COMPLETE\n\n"
-                            f"{clean_name}"
-                        )
+                        cap_text = "✅  MUXING COMPLETE"
                         
                         try:
                             sent_msg = await context.bot.send_document(
