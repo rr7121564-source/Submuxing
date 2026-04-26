@@ -1,6 +1,12 @@
 #!/bin/bash
-# Start Telegram Local API in background
-telegram-bot-api --local --api-id=YOUR_API_ID --api-hash=YOUR_API_HASH & 
 
-# Start the Python bot
+# 1. Local API Server start karein background mein
+# --local flag zaroori hai badi files ke liye
+# --api-id aur --api-hash environment variables se uthayega
+telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH --http-port=8081 &
+
+# 2. 5 second wait karein taaki server puri tarah start ho jaye
+sleep 5
+
+# 3. Ab apna Python bot start karein
 python bot.py
