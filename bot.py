@@ -90,8 +90,7 @@ def start_text():
     )
 
 def start_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("📚 Help & Commands", callback_data="show_help")],
-        [InlineKeyboardButton("🗑 Clear Background Tasks", callback_data="clear_tasks")]
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📚 Help & Commands", callback_data="show_help")],[InlineKeyboardButton("🗑 Clear Background Tasks", callback_data="clear_tasks")]
     ])
 
 def help_text():
@@ -501,11 +500,34 @@ async def cancel_cb(update, context):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear All Tasks", callback_data="clear_tasks")]])
         )
 
+# --- DUMMY HTTP SERVER (FOR UPTIME ROBOT) ---
+class PingHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is awake and running!")
+        
+    def log_message(self, format, *args):
+        # Ping logs ko console me bar-bar print hone se rokne ke liye
+        pass
+
+def run_dummy_server():
+    try:
+        server = HTTPServer(('0.0.0.0', PORT), PingHandler)
+        print(f"🌐 Web Server started on port {PORT}")
+        server.serve_forever()
+    except Exception as e:
+        print(f"❌ Web Server Error: {e}")
+
 # --- MAIN ---
 def main():
     init_db()
     init_bot_db() 
-    threading.Thread(target=lambda: HTTPServer(('0.0.0.0', PORT), BaseHTTPRequestHandler).serve_forever(), daemon=True).start()
+    
+    # Run the dummy server in background
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     app = ApplicationBuilder().token(BOT_TOKEN).base_url("http://127.0.0.1:8081/bot").local_mode(True).build()
     
     app.add_handler(TypeHandler(Update, check_access), group=-2)
@@ -527,6 +549,7 @@ def main():
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
     app.add_handler(CallbackQueryHandler(ui_cb, pattern=r"^(show_help|show_start|clear_tasks)$"))
     
+    print("🤖 Bot is now polling...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
