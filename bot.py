@@ -124,13 +124,13 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         if not line: break
         line = line.decode('utf-8').strip()
         if line.startswith('out_time_us='):
-            cur = int(line.split('=')[1]) / 1000000
-            if duration > 0 and time.time() - last_up > 12:
-                perc = min(100, (cur / duration) * 100)
-                try:
-                    await status_msg.edit_text(f"⚙️ Muxing: {perc:.2f}%\n(Wait for upload...)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
+            try:
+                cur = int(line.split('=')[1]) / 1000000
+                if duration > 0 and time.time() - last_up > 15:
+                    perc = min(100, (cur / duration) * 100)
+                    await status_msg.edit_text(f"⚙️ Muxing: {perc:.2f}%\n(Please wait...)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Cancel", callback_data=f"cancel_{chat_id}")]]))
                     last_up = time.time()
-                except: pass
+            except: pass
     await proc.wait()
     if chat_id in active_processes: del active_processes[chat_id]
     return proc.returncode == 0
@@ -139,7 +139,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
 # BOT HANDLERS
 # ================================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear() # Purana data saaf
+    context.user_data.clear() 
     await update.message.reply_text("🤖 **Bot Active!**\n\n1️⃣ Send MKV file.\n2️⃣ Send Subtitle file.\n3️⃣ Send New Name (or /skip).")
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,8 +232,19 @@ async def run_queue(context, data, status):
             success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
             if success:
                 await status.edit_text("📤 Uploading...")
-                with open(t_path, 'rb') as th if t_path else None as th:
-                    await context.bot.send_document(chat_id=data['chat_id'], document=f"file://{out}", thumbnail=th, read_timeout=3600, write_timeout=3600)
+                
+                thumb_file = open(t_path, 'rb') if t_path and os.path.exists(t_path) else None
+                try:
+                    await context.bot.send_document(
+                        chat_id=data['chat_id'], 
+                        document=f"file://{out}", 
+                        thumbnail=thumb_file, 
+                        read_timeout=3600, 
+                        write_timeout=3600
+                    )
+                finally:
+                    if thumb_file: thumb_file.close()
+                
                 await status.delete()
             else: await status.edit_text("❌ Muxing Failed.")
         except Exception as e: await status.edit_text(f"Error: {e}")
@@ -251,6 +262,8 @@ async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================================
 def main():
     token = os.getenv("BOT_TOKEN")
+    if not token: return
+    
     threading.Thread(target=run_dummy_server, args=(int(os.environ.get("PORT", 10000)),), daemon=True).start()
 
     app = ApplicationBuilder().token(token).base_url("http://127.0.0.1:8081/bot").base_file_url("http://127.0.0.1:8081/file/bot").local_mode(True).build()
@@ -265,7 +278,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, handle_docs))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
 
-    print("Bot Started - Clean Mode")
+    print("Bot Started - Corrected Version")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
