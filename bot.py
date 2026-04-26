@@ -10,10 +10,13 @@ from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, acti
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
 from utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
+# --- GLOBAL QUEUE COUNTER ---
+current_active_tasks = 0
+
 # --- HELPERS ---
 def humanbytes(size):
     if not size: return "0 B"
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
@@ -93,7 +96,6 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         out = os.path.abspath(f"{base_name}{ext}")
         
         try:
-            # FIX: Execute wait properly
             ffmpeg_proc = await asyncio.create_subprocess_exec(
                 'ffmpeg', '-y', '-i', mkv_f.file_path, '-map', f"0:{idx}", '-c:s', 'copy', out,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
@@ -146,7 +148,6 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     out = os.path.abspath(f"{data['name']}_{idx}{ext}")
     
     try:
-        # FIX: Execute wait properly
         ffmpeg_proc = await asyncio.create_subprocess_exec(
             'ffmpeg', '-y', '-i', data['path'], '-map', f"0:{idx}", '-c:s', 'copy', out,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
@@ -214,6 +215,8 @@ async def handle_text(update, context):
         await start_task(update, context, name)
 
 async def start_task(update, context, final_name):
+    global current_active_tasks
+    
     msg_list =[
         context.user_data.get('mkv_msg_id'),
         context.user_data.get('sub_msg_id'),
@@ -227,60 +230,78 @@ async def start_task(update, context, final_name):
         'to_delete': msg_list
     }
     context.user_data.clear()
-    status = await update.message.reply_text("⏳ **Added to Queue...**")
+    
+    current_active_tasks += 1
+    
+    # Message Logic for Queue position
+    if current_active_tasks > 1:
+        status = await update.message.reply_text(f"⏳ **Added to Queue...**\n🔢 **Queue Position:** `{current_active_tasks - 1}`")
+    else:
+        status = await update.message.reply_text("⏳ **Processing Started...**")
+        
     asyncio.create_task(run_queue(context, data, status))
 
 async def run_queue(context, data, status):
-    async with global_task_lock:
-        await status.edit_text("⚙️ **Initializing Task...**")
-        tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
-        os.makedirs(tmp, exist_ok=True)
-        out = os.path.join(tmp, data['name'])
-        thumb_path = os.path.join(tmp, "thumb.jpg")
-        
-        try:
-            m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
-            s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
-            
-            # 1. Muxing
-            success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
-            
-            if success:
-                # 2. Extract Thumbnail (Preview)
-                await status.edit_text("🖼️ **Generating Preview...**")
-                has_thumb = await extract_thumbnail(out, thumb_path)
-                
-                # 3. Uploading
-                start_up = time.time()
-                await status.edit_text("📤 **Uploading Document...**")
-                
-                with ProgressFile(out, status, start_up) as pf:
-                    # Thumbnail file open karein agar extract hui hai
-                    thumb_file = open(thumb_path, 'rb') if has_thumb else None
-                    try:
-                        await context.bot.send_document(
-                            chat_id=data['chat_id'], 
-                            document=pf, 
-                            thumbnail=thumb_file,
-                            caption="Muxing complete",
-                            filename=data['name'],
-                            read_timeout=3600,
-                            write_timeout=3600
-                        )
-                    finally:
-                        if thumb_file: thumb_file.close()
-                
-                # 4. Cleanup
-                await delete_messages(context.bot, data['chat_id'], data['to_delete'])
-                await status.delete()
-                
-            else:
-                await status.edit_text("❌ **Muxing Failed.**")
-        except Exception as e:
-            try: await status.edit_text(f"❌ **Error:** {e}")
+    global current_active_tasks
+    try:
+        # Ye block sirf 1 time pe 1 hi chalega baaki Queue me rukenge
+        async with global_task_lock:
+            try:
+                await status.edit_text("⚙️ **Initializing Task...**")
             except: pass
-        finally:
-            clean_temp_files(tmp)
+            
+            tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
+            os.makedirs(tmp, exist_ok=True)
+            out = os.path.join(tmp, data['name'])
+            thumb_path = os.path.join(tmp, "thumb.jpg")
+            
+            try:
+                m_f = await context.bot.get_file(data['mkv_id'], read_timeout=3600)
+                s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
+                
+                # 1. Muxing
+                success = await mux_video(m_f.file_path, s_f.file_path, out, data['chat_id'], status)
+                
+                if success:
+                    # 2. Extract Thumbnail (Preview)
+                    await status.edit_text("🖼️ **Generating Preview...**")
+                    has_thumb = await extract_thumbnail(out, thumb_path)
+                    
+                    # 3. Uploading
+                    start_up = time.time()
+                    await status.edit_text("📤 **Uploading Document...**")
+                    
+                    with ProgressFile(out, status, start_up) as pf:
+                        # Thumbnail file open karein agar extract hui hai
+                        thumb_file = open(thumb_path, 'rb') if has_thumb else None
+                        try:
+                            await context.bot.send_document(
+                                chat_id=data['chat_id'], 
+                                document=pf, 
+                                thumbnail=thumb_file,
+                                caption="Muxing complete",
+                                filename=data['name'],
+                                read_timeout=3600,
+                                write_timeout=3600
+                            )
+                        finally:
+                            if thumb_file: thumb_file.close()
+                    
+                    # 4. Cleanup
+                    await delete_messages(context.bot, data['chat_id'], data['to_delete'])
+                    await status.delete()
+                    
+                else:
+                    await status.edit_text("❌ **Muxing Failed.**")
+            except Exception as e:
+                try: await status.edit_text(f"❌ **Error:** {e}")
+                except: pass
+            finally:
+                clean_temp_files(tmp)
+                
+    finally:
+        # Task puri tarah hone ke baad Queue counter kam ho jayega
+        current_active_tasks -= 1
 
 async def cancel_cb(update, context):
     cid = update.effective_chat.id
