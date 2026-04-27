@@ -23,8 +23,9 @@ on:
         required: true
       font_id:
         required: true
+      logo_id:
+        required: true
 
-# 🟢 YEH HAI AAPKA CLOUD QUEUE SYSTEM 🟢
 concurrency:
   group: encoding-queue
   cancel-in-progress: false
@@ -62,4 +63,5 @@ jobs:
           THREAD_ID: ${{ github.event.inputs.thread_id }}
           THUMB_ID: ${{ github.event.inputs.thumb_id }}
           FONT_ID: ${{ github.event.inputs.font_id }}
+          LOGO_ID: ${{ github.event.inputs.logo_id }}
         run: python encoder.py
