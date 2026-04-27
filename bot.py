@@ -204,7 +204,7 @@ async def cmd_compress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await process_dispatch(update, context, final_name, mode="compress")
 
-# --- THUMBNAIL & EXTRACTION LOGIC (Same as before) ---
+# --- THUMBNAIL & EXTRACTION LOGIC ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     photo = update.message.photo[-1]
@@ -342,8 +342,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_name = auto_rename(context.user_data['orig_name']) if RENAME_PREF.get(user_id, True) else context.user_data['orig_name']
         context.user_data['final_name'] = final_name
         
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔥 Hardsub (Send to GitHub)", callback_data="mode_hardsub")],[InlineKeyboardButton("⚡ Softsub (Fast Mux Local)", callback_data="mode_mux")]
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 Hardsub (Send to GitHub)", callback_data="mode_hardsub")],[InlineKeyboardButton("⚡ Softsub (Fast Mux Local)", callback_data="mode_mux")]
         ])
         mode_msg = await update.message.reply_text("🛠 Choose Processing Mode:", reply_markup=kb)
         context.user_data['to_delete'].append(mode_msg.message_id)
@@ -368,13 +367,16 @@ async def process_dispatch(update, context, final_name, mode):
     
     dump_id = get_dump_id()
     target_thread = "none"
+    folder_letter = "#" 
     
     # Calculate dump topic string for GitHub to use
     if dump_id:
         core_name = re.sub(r'\[.*?\]', '', final_name).replace('@lpxempire', '').strip()
         match = re.search(r'[A-Za-z0-9]', core_name)
-        folder_letter = match.group(0).upper() if match and not match.group(0).isdigit() else "#"
-        
+        if match:
+            char = match.group(0).upper()
+            folder_letter = char if not char.isdigit() else "#"
+            
         thread = get_thread_id(folder_letter)
         if not thread:
             try:
@@ -386,10 +388,16 @@ async def process_dispatch(update, context, final_name, mode):
 
     if mode in ["hardsub", "compress"]:
         status = await context.bot.send_message(chat_id, "⏳ Sending Task to GitHub Worker...")
+        
+        # 🟢 FIX: Agar sub_id Python me None hai, toh use Text format "none" bana do
+        actual_sub_id = context.user_data.get('sub_id')
+        if not actual_sub_id:
+            actual_sub_id = "none"
+
         task = {
             "task_type": mode,
             "video_id": context.user_data['mkv_id'],
-            "sub_id": context.user_data.get('sub_id', 'none'),
+            "sub_id": actual_sub_id,
             "rename": final_name,
             "chat_id": str(chat_id),
             "dump_id": str(dump_id) if dump_id else "none",
