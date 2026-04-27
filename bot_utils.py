@@ -33,12 +33,7 @@ async def get_duration(file_path):
     except: return 0.0
 
 async def extract_thumbnail(video_path, thumb_path):
-    """Video se cover nikalna aur use 320px scale karna"""
-    cmd =[
-        'ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, 
-        '-vf', 'scale=320:-1', 
-        '-vframes', '1', thumb_path
-    ]
+    cmd =['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     await proc.communicate()
     return os.path.exists(thumb_path)
@@ -52,7 +47,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
     for idx, f in enumerate(os.listdir("fonts")):
         fp = os.path.join("fonts", f)
         ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
+        mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
         if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
     sub_ext = os.path.splitext(sub_path)[1].lower()
@@ -63,7 +58,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
         '-map', '0:v', '-map', '0:a?', '-map', '1:0',
         '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec,
         '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
-    ] + font_args + ['-progress', 'pipe:1', output_path]
+    ] + font_args +['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     active_processes[chat_id] = proc
@@ -79,7 +74,6 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
             try:
                 time_str = line.split('=')[1]
                 if time_str.lower() == 'n/a': continue 
-                
                 cur = int(time_str) / 1000000
                 now = time.time()
                 
@@ -91,21 +85,19 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                     
                     bar_length = 14
                     filled_blocks = int((perc / 100) * bar_length)
-                    bar = "▓" * filled_blocks + "░" * (bar_length - filled_blocks)
+                    bar = "" * filled_blocks + "" * (bar_length - filled_blocks)
                     
                     text = (
-                        "🎬  SUBTITLE SYNC ENGINE \n"
-                        "──────────────────────────\n"
-                        f"▸ Status    : Muxing Subtitle...\n"
-                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
-                        f"▸ Velocity  : {speed:.2f}x\n"
-                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
-                        "──────────────────────────\n"
-                        "⚙ Running silently in background"
+                        "  SUBTITLE SYNC ENGINE \n"
+                        "\n"
+                        f" Status    : Muxing Subtitle...\n"
+                        f" Progress  : {bar}  {perc:.2f}%\n"
+                        f" Velocity  : {speed:.2f}x\n"
+                        f" Remaining : ~{get_readable_time(eta)}\n"
+                        "\n"
+                        " Running silently in background"
                     )
-                    
-                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data=f"cancel_{chat_id}")]])
-                    
+                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton(" Cancel Process", callback_data=f"cancel_{chat_id}")]])
                     try: await status_msg.edit_text(text, reply_markup=cancel_markup)
                     except: pass
                     last_up = now
