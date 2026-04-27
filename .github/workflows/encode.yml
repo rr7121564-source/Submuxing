@@ -1,0 +1,51 @@
+name: Video Encoding Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_type:
+        required: true
+      video_id:
+        required: true
+      sub_id:
+        required: true
+      rename:
+        required: true
+      chat_id:
+        required: true
+      dump_id:
+        required: true
+      thread_id:
+        required: true
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg
+          pip install pyrogram tgcrypto
+
+      - name: Run Worker
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          TASK_TYPE: ${{ github.event.inputs.task_type }}
+          VIDEO_ID: ${{ github.event.inputs.video_id }}
+          SUB_ID: ${{ github.event.inputs.sub_id }}
+          RENAME: ${{ github.event.inputs.rename }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          DUMP_ID: ${{ github.event.inputs.dump_id }}
+          THREAD_ID: ${{ github.event.inputs.thread_id }}
+        run: python encoder.py
