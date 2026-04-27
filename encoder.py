@@ -18,6 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
+LOGO_ID = os.getenv("LOGO_ID")
 RENAME = os.getenv("RENAME", "output.mp4")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 DUMP_ID = os.getenv("DUMP_ID")
@@ -34,7 +35,7 @@ def get_readable_time(seconds: int) -> str:
     (minutes, seconds) = divmod(remainder, 60)
     if int(minutes) != 0: result += f"{int(minutes)}m "
     result += f"{int(seconds)} sec"
-    return result.strip()
+    return result.strip() if result else "0 sec"
 
 async def get_duration(file_path):
     cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
@@ -49,18 +50,18 @@ async def progress_bar(current, total, app, msg_id, action_text):
     if now - last_edit_time > 5 or current == total:
         try:
             perc = (current / total) * 100 if total > 0 else 0
-            bar_length = 14
+            bar_length = 10
             filled = int((perc / 100) * bar_length)
-            bar = "▓" * filled + "░" * (bar_length - filled)
+            bar = "▰" * filled + "▱" * (bar_length - filled)
             
             text = (
-                f"🎬  GITHUB WORKER \n"
-                "──────────────────────────\n"
-                f"▸ Status    : {action_text}\n"
-                f"▸ Progress  : {bar}  {perc:.1f}%\n"
-                f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
-                "──────────────────────────\n"
-                "⚙ Running on Cloud Engine"
+                f"☁️ CLOUD WORKER NODE ☁️\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📌 Task     : {action_text}\n"
+                f"📊 Progress : {bar}[ {perc:.1f}% ]\n"
+                f"📦 Volume   : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Securely transferring data..."
             )
             await app.edit_message_text(CHAT_ID, msg_id, text)
             last_edit_time = now
@@ -70,19 +71,24 @@ async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    status_msg = await app.send_message(CHAT_ID, "⚙️ Worker Triggered: Preparing...")
+    status_msg = await app.send_message(CHAT_ID, "⏳ SYSTEM: Cloud worker booting infrastructure...")
     msg_id = status_msg.id
     
-    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
+    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "Fetching Media Asset 📥"))
+    
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
-        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
+        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "Fetching Subtitle Payload 📥"))
         
-    await app.edit_message_text(CHAT_ID, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*")
+    logo_path = None
+    if LOGO_ID and LOGO_ID != "none":
+        logo_path = await app.download_media(LOGO_ID, file_name="logo.png")
+        
+    await app.edit_message_text(CHAT_ID, msg_id, "☁️ CLOUD NODE: Booting FFmpeg Core Engine...\n(Connection Paused for Worker Safety)")
     await app.stop() 
-    return video_path, sub_path, msg_id
+    return video_path, sub_path, logo_path, msg_id
 
-async def encode_phase(video_path, sub_path, msg_id):
+async def encode_phase(video_path, sub_path, logo_path, msg_id):
     output = RENAME
     duration = await get_duration(video_path)
     
@@ -97,18 +103,19 @@ async def encode_phase(video_path, sub_path, msg_id):
     if TASK_TYPE == "hardsub":
         abs_sub = os.path.abspath(sub_path).replace('\\', '/').replace(':', '\\:')
         fonts_dir = os.path.abspath("fonts").replace('\\', '/').replace(':', '\\:')
-        cmd =[
-            'ffmpeg', '-y', '-i', video_path, '-sn', 
-            '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy'
-        ] + ['-progress', 'pipe:1', output]
-        engine_name = "HARDSUB ENGINE"
+        
+        if logo_path:
+            filter_str = f"[0:v][1:v]overlay=W-w-10:10[v1];[v1]subtitles='{abs_sub}':fontsdir='{fonts_dir}'[v]"
+            cmd =['ffmpeg', '-y', '-i', video_path, '-i', logo_path, '-filter_complex', filter_str, '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output]
+        else:
+            cmd =['ffmpeg', '-y', '-i', video_path, '-sn', '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output]
+        engine_name = "CLOUD ENCODING ENGINE"
     else:
-        cmd =[
-            'ffmpeg', '-y', '-i', video_path, 
-            '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy'
-        ] + font_args + ['-progress', 'pipe:1', output]
+        if logo_path:
+            filter_str = f"[0:v][1:v]overlay=W-w-10:10[v]"
+            cmd =['ffmpeg', '-y', '-i', video_path, '-i', logo_path, '-filter_complex', filter_str, '-map', '[v]', '-map', '0:a?', '-map', '0:s?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy', '-progress', 'pipe:1', output]
+        else:
+            cmd =['ffmpeg', '-y', '-i', video_path, '-map', '0:v', '-map', '0:a?', '-map', '0:s?', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy'] + font_args +['-progress', 'pipe:1', output]
         engine_name = "COMPRESSION ENGINE"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -135,19 +142,19 @@ async def encode_phase(video_path, sub_path, msg_id):
                     speed = cur / elapsed if elapsed > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
                     
-                    bar_length = 14
+                    bar_length = 10
                     filled = int((perc / 100) * bar_length)
-                    bar = "▓" * filled + "░" * (bar_length - filled)
+                    bar = "▰" * filled + "▱" * (bar_length - filled)
                     
                     text = (
-                        f"🎬  {engine_name} \n"
-                        "──────────────────────────\n"
-                        f"▸ Status    : Processing Frame...\n"
-                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
-                        f"▸ Velocity  : {speed:.2f}x\n"
-                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
-                        "──────────────────────────\n"
-                        "⚙ GitHub Cloud Worker"
+                        f"🔥 {engine_name} 🔥\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📌 Task     : Rendering Frames\n"
+                        f"📊 Progress : {bar} [ {perc:.1f}% ]\n"
+                        f"🚀 Speed    : {speed:.2f}x\n"
+                        f"⏳ ETA      : {get_readable_time(eta)}\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        "Dedicated hardware allocation active..."
                     )
                     try: await app.edit_message_text(CHAT_ID, msg_id, text)
                     except: pass
@@ -172,30 +179,30 @@ async def upload_phase(output, returncode, msg_id):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, "▸ Processing Done! Starting Fresh Upload...")
+        await app.edit_message_text(CHAT_ID, msg_id, "⏳ SYSTEM: Transferring rendered payload to Telegram...")
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
-        cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
+        cap = f"✅ ENCODING SUCCESSFUL\n\n◈ Task: {TASK_TYPE.upper()}\n◈ Engine: Cloud Worker Node"
         
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
-                progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
+                progress=progress_bar, progress_args=(app, msg_id, "Uploading Rendered Payload 📤")
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully dumped to Group!")
+                await app.send_message(CHAT_ID, f"{cap}\n\n📁 Securely dumped to target sector.")
             await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
-            await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
+            await app.edit_message_text(CHAT_ID, msg_id, f"⚠️ UPLOAD ERROR: {str(e)}")
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        await app.edit_message_text(CHAT_ID, msg_id, f"❌ ACTION TERMINATED: Rendering Engine Failed.")
     
     await app.stop()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    vid, sub, mid = loop.run_until_complete(download_phase())
-    out, rcode = loop.run_until_complete(encode_phase(vid, sub, mid))
+    vid, sub, logo, mid = loop.run_until_complete(download_phase())
+    out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
     loop.run_until_complete(upload_phase(out, rcode, mid))
