@@ -24,6 +24,11 @@ on:
       font_id:
         required: true
 
+# 🟢 YEH HAI AAPKA CLOUD QUEUE SYSTEM 🟢
+concurrency:
+  group: encoding-queue
+  cancel-in-progress: false
+
 jobs:
   encode:
     runs-on: ubuntu-latest
