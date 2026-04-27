@@ -46,26 +46,22 @@ async def get_duration(file_path):
 async def progress_bar(current, total, app, msg_id, action_text):
     global last_edit_time
     now = time.time()
-    if duration > 0 and (now - last_up) > 10:
-                    perc = min(100, (cur / duration) * 100)
-                    elapsed = now - start_time
-                    speed = cur / elapsed if elapsed > 0 else 0
-                    eta = (duration - cur) / speed if speed > 0 else 0
-                    
-                    bar_length = 10
-                    filled = int((perc / 100) * bar_length)
-                    bar = "▰" * filled + "▱" * (bar_length - filled)
-                    
-                    text = (
-                        f"🔥 {engine_name} 🔥\n"
-                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📌 Task     : Rendering Frames\n"
-                        f"📊 Progress : {bar} [ {perc:.1f}% ]\n"
-                        f"🚀 Speed    : {speed:.2f}x\n"
-                        f"⏳ ETA      : {get_readable_time(eta)}\n"
-                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        "Dedicated hardware allocation active..."
-                    )
+    if now - last_edit_time > 5 or current == total:
+        try:
+            perc = (current / total) * 100 if total > 0 else 0
+            bar_length = 14
+            filled = int((perc / 100) * bar_length)
+            bar = "▓" * filled + "░" * (bar_length - filled)
+            
+            text = (
+                f"🎬  GITHUB WORKER \n"
+                "──────────────────────────\n"
+                f"▸ Status    : {action_text}\n"
+                f"▸ Progress  : {bar}  {perc:.1f}%\n"
+                f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
+                "──────────────────────────\n"
+                "⚙ Running on Cloud Engine"
+            )
             await app.edit_message_text(CHAT_ID, msg_id, text)
             last_edit_time = now
         except: pass
@@ -180,21 +176,21 @@ async def upload_phase(output, returncode, msg_id):
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
-        cap = f"✅ {TASK_TYPE.upper()} SUCCESSFUL"
+        cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
         
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
-                progress=progress_bar, progress_args=(app, msg_id, "Uploading Rendered Payload 📤")
+                progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, f"{cap}\n\n📁 Securely dumped to target sector.")
+                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully dumped to Group!")
             await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
-            await app.edit_message_text(CHAT_ID, msg_id, f"⚠️ UPLOAD ERROR: {str(e)}")
+            await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ ACTION TERMINATED: Rendering Engine Failed.")
+        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
     
     await app.stop()
 
