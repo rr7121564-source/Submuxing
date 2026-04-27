@@ -6,10 +6,10 @@ FROM python:3.11-alpine
 
 ENV PYTHONUNBUFFERED=1
 
-# Install FFmpeg and bash
-RUN apk update && apk add --no-cache ffmpeg bash
+# Install FFmpeg, bash and curl
+RUN apk update && apk add --no-cache ffmpeg bash curl
 
-# Copy Local API Server binary from the first stage
+# Copy Local API Server binary
 COPY --from=api-server /usr/local/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
 
 WORKDIR /app
@@ -18,11 +18,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all code (isne config.py, database.py, utils.py sab copy ho jayenge)
+# Copy all files
 COPY . .
 
-# Make start script executable
+# Hugging Face Strict Permissions Fix (Bohot zaruri hai)
 RUN chmod +x start.sh
+RUN chmod -R 777 /app
 
 # Run the startup script
-CMD ["./start.sh"]
+CMD["./start.sh"]
