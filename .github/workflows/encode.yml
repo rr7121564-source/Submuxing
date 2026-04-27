@@ -11,11 +11,17 @@ on:
         required: true
       rename:
         required: true
-      chat_id:
+      user_id:
+        required: true
+      origin_chat:
         required: true
       dump_id:
         required: true
       thread_id:
+        required: true
+      thumb_id:
+        required: true
+      font_id:
         required: true
 
 jobs:
@@ -45,7 +51,10 @@ jobs:
           VIDEO_ID: ${{ github.event.inputs.video_id }}
           SUB_ID: ${{ github.event.inputs.sub_id }}
           RENAME: ${{ github.event.inputs.rename }}
-          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          USER_ID: ${{ github.event.inputs.user_id }}
+          ORIGIN_CHAT: ${{ github.event.inputs.origin_chat }}
           DUMP_ID: ${{ github.event.inputs.dump_id }}
           THREAD_ID: ${{ github.event.inputs.thread_id }}
+          THUMB_ID: ${{ github.event.inputs.thumb_id }}
+          FONT_ID: ${{ github.event.inputs.font_id }}
         run: python encoder.py
