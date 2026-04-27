@@ -1,42 +1,57 @@
-name: Video Encoding Worker
+name: Cloud Encoding Worker
 
 on:
   workflow_dispatch:
     inputs:
       task_type:
+        description: 'Mode of operation (compress/hardsub)'
         required: true
       video_id:
+        description: 'Telegram File ID of Video'
         required: true
       sub_id:
+        description: 'Telegram File ID of Subtitle'
+        required: true
+      logo_id:
+        description: 'Telegram File ID of Watermark Logo'
         required: true
       rename:
+        description: 'Final Output File Name'
         required: true
       chat_id:
+        description: 'Target Chat ID'
         required: true
       dump_id:
+        description: 'Dump Group ID'
         required: true
       thread_id:
+        description: 'Topic Thread ID'
         required: true
 
 jobs:
   encode:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install Dependencies
+      - name: Install FFmpeg & Fonts Support
         run: |
-          sudo apt update
-          sudo apt install -y ffmpeg
-          pip install pyrogram tgcrypto
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-liberation
 
-      - name: Run Worker
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Cloud Worker (Encoder)
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
@@ -44,6 +59,7 @@ jobs:
           TASK_TYPE: ${{ github.event.inputs.task_type }}
           VIDEO_ID: ${{ github.event.inputs.video_id }}
           SUB_ID: ${{ github.event.inputs.sub_id }}
+          LOGO_ID: ${{ github.event.inputs.logo_id }}
           RENAME: ${{ github.event.inputs.rename }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
           DUMP_ID: ${{ github.event.inputs.dump_id }}
