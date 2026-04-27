@@ -29,6 +29,7 @@ THREAD_ID = os.getenv("THREAD_ID")
 # Custom Settings
 THUMB_ID = os.getenv("THUMB_ID")
 FONT_ID = os.getenv("FONT_ID")
+LOGO_ID = os.getenv("LOGO_ID")
 
 last_edit_time = 0
 cancel_button = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data="cancel_gh")]])
@@ -73,9 +74,8 @@ async def progress_bar(current, total, app, msg_id, action_text):
             await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
             last_edit_time = now
         except Exception as e:
-            if "MESSAGE_DELETED" in str(e).upper() or "MESSAGE_ID_INVALID" in str(e).upper():
-                print("Task canceled by user.")
-                sys.exit(1) # Kills process if user deletes message via Cancel Button
+            if "DELETED" in str(e).upper() or "INVALID" in str(e).upper():
+                sys.exit(1)
 
 async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -99,6 +99,10 @@ async def download_phase():
         for idx, fid in enumerate(FONT_ID.split(',')):
             try: await app.download_media(fid, file_name=f"fonts/custom_font_{idx}.ttf")
             except: pass
+            
+    if LOGO_ID != "none":
+        try: await app.download_media(LOGO_ID, file_name="logo.png")
+        except: pass
         
     await app.edit_message_text(ORIGIN_CHAT, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*", reply_markup=cancel_button)
     await app.stop() 
@@ -118,11 +122,21 @@ async def encode_phase(video_path, sub_path, msg_id):
     if TASK_TYPE == "hardsub":
         abs_sub = os.path.abspath(sub_path).replace('\\', '/').replace(':', '\\:')
         fonts_dir = os.path.abspath("fonts").replace('\\', '/').replace(':', '\\:')
-        cmd =[
-            'ffmpeg', '-y', '-i', video_path, '-sn', 
-            '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy'
-        ] +['-progress', 'pipe:1', output]
+        vf_sub = f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'"
+        
+        if LOGO_ID != "none" and os.path.exists("logo.png"):
+            # Put Subtitle AND Logo Overlay (Top Right corner)
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, '-i', 'logo.png', '-sn', 
+                '-filter_complex', f"[0:v]{vf_sub}[v];[v][1:v]overlay=W-w-10:10", 
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
+            ]
+        else:
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, '-sn', 
+                '-vf', vf_sub, 
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
+            ]
         engine_name = "HARDSUB ENGINE"
     else:
         cmd =[
@@ -173,7 +187,7 @@ async def encode_phase(video_path, sub_path, msg_id):
                     try: 
                         await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
                     except Exception as e:
-                        if "MESSAGE_DELETED" in str(e).upper() or "MESSAGE_ID_INVALID" in str(e).upper():
+                        if "DELETED" in str(e).upper() or "INVALID" in str(e).upper():
                             proc.terminate()
                             sys.exit(1)
                     last_up = now
@@ -202,7 +216,6 @@ async def upload_phase(output, returncode, msg_id):
         except: pass
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
         
-        # 1. Send to User PM
         try:
             await app.send_document(chat_id=USER_ID, document=output, thumb=thumb_path if os.path.exists(thumb_path) else None, caption=cap, progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video"))
             if ORIGIN_CHAT != USER_ID:
@@ -210,7 +223,6 @@ async def upload_phase(output, returncode, msg_id):
         except Exception as e:
             await app.send_message(ORIGIN_CHAT, f"❌ I couldn't send the file to your PM. Did you block me or forget to start me?")
             
-        # 2. Send to Dump Group
         if DUMP_ID != "none":
             try: await app.send_document(chat_id=int(DUMP_ID), document=output, reply_to_message_id=int(THREAD_ID) if THREAD_ID != "none" else None, thumb=thumb_path if os.path.exists(thumb_path) else None, caption=cap)
             except: pass
