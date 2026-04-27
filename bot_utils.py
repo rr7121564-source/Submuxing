@@ -13,16 +13,12 @@ def clean_temp_files(path):
 def get_readable_time(seconds: int) -> str:
     result = ""
     (days, remainder) = divmod(seconds, 86400)
-    days = int(days)
-    if days != 0: result += f"{days}d "
+    if int(days) != 0: result += f"{int(days)}d "
     (hours, remainder) = divmod(remainder, 3600)
-    hours = int(hours)
-    if hours != 0: result += f"{hours}h "
+    if int(hours) != 0: result += f"{int(hours)}h "
     (minutes, seconds) = divmod(remainder, 60)
-    minutes = int(minutes)
-    if minutes != 0: result += f"{minutes}m "
-    seconds = int(seconds)
-    result += f"{seconds} sec"
+    if int(minutes) != 0: result += f"{int(minutes)}m "
+    result += f"{int(seconds)} sec"
     return result.strip()
 
 async def get_duration(file_path):
@@ -38,17 +34,19 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
+async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, mode="mux", task_fonts_dir="fonts"):
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
     
     duration = await get_duration(mkv_path)
-    os.makedirs("fonts", exist_ok=True)
     font_args =[]
-    for idx, f in enumerate(os.listdir("fonts")):
-        fp = os.path.join("fonts", f)
-        ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
-        if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
+    
+    # User-specific fonts directory
+    if os.path.exists(task_fonts_dir):
+        for idx, f in enumerate(os.listdir(task_fonts_dir)):
+            fp = os.path.join(task_fonts_dir, f)
+            ext = os.path.splitext(f)[1].lower()
+            mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
+            if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
     sub_ext = os.path.splitext(sub_path)[1].lower()
     sub_codec = 'ass' if sub_ext == '.ass' else 'subrip'
@@ -85,19 +83,19 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg):
                     
                     bar_length = 14
                     filled_blocks = int((perc / 100) * bar_length)
-                    bar = "" * filled_blocks + "" * (bar_length - filled_blocks)
+                    bar = "▓" * filled_blocks + "░" * (bar_length - filled_blocks)
                     
                     text = (
-                        "  SUBTITLE SYNC ENGINE \n"
-                        "\n"
-                        f" Status    : Muxing Subtitle...\n"
-                        f" Progress  : {bar}  {perc:.2f}%\n"
-                        f" Velocity  : {speed:.2f}x\n"
-                        f" Remaining : ~{get_readable_time(eta)}\n"
-                        "\n"
-                        " Running silently in background"
+                        "🎬  SUBTITLE SYNC ENGINE \n"
+                        "──────────────────────────\n"
+                        f"▸ Status    : Muxing Subtitle...\n"
+                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
+                        f"▸ Velocity  : {speed:.2f}x\n"
+                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
+                        "──────────────────────────\n"
+                        "⚙ Running silently in background"
                     )
-                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton(" Cancel Process", callback_data=f"cancel_{chat_id}")]])
+                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data=f"cancel_{chat_id}")]])
                     try: await status_msg.edit_text(text, reply_markup=cancel_markup)
                     except: pass
                     last_up = now
