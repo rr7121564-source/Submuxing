@@ -1,5 +1,6 @@
 import os, sys, time, asyncio
 import pyrogram.utils
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def patched_get_peer_type(peer_id: int) -> str:
     val = str(peer_id)
@@ -30,6 +31,7 @@ THUMB_ID = os.getenv("THUMB_ID")
 FONT_ID = os.getenv("FONT_ID")
 
 last_edit_time = 0
+cancel_button = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data="cancel_gh")]])
 
 def get_readable_time(seconds: int) -> str:
     result = ""
@@ -60,23 +62,26 @@ async def progress_bar(current, total, app, msg_id, action_text):
             bar = "▓" * filled + "░" * (bar_length - filled)
             
             text = (
-                f"🎬  GITHUB WORKER \n"
+                f"🎬  CLOUD WORKER \n"
                 "──────────────────────────\n"
                 f"▸ Status    : {action_text}\n"
                 f"▸ Progress  : {bar}  {perc:.1f}%\n"
                 f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 "──────────────────────────\n"
-                "⚙ Running on Cloud Engine"
+                "⚙ Running on Secure Cloud Queue"
             )
-            await app.edit_message_text(ORIGIN_CHAT, msg_id, text)
+            await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
             last_edit_time = now
-        except: pass
+        except Exception as e:
+            if "MESSAGE_DELETED" in str(e).upper() or "MESSAGE_ID_INVALID" in str(e).upper():
+                print("Task canceled by user.")
+                sys.exit(1) # Kills process if user deletes message via Cancel Button
 
 async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    status_msg = await app.send_message(ORIGIN_CHAT, "⚙️ Worker Triggered: Preparing...")
+    status_msg = await app.send_message(ORIGIN_CHAT, "⚙️ Cloud Worker: Downloading Source...", reply_markup=cancel_button)
     msg_id = status_msg.id
     
     os.makedirs("fonts", exist_ok=True)
@@ -87,12 +92,15 @@ async def download_phase():
         sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
         
     if THUMB_ID != "none":
-        await app.download_media(THUMB_ID, file_name="thumb.jpg")
+        try: await app.download_media(THUMB_ID, file_name="thumb.jpg")
+        except: pass
         
     if FONT_ID != "none":
-        await app.download_media(FONT_ID, file_name=f"fonts/custom_font_{USER_ID}.ttf")
+        for idx, fid in enumerate(FONT_ID.split(',')):
+            try: await app.download_media(fid, file_name=f"fonts/custom_font_{idx}.ttf")
+            except: pass
         
-    await app.edit_message_text(ORIGIN_CHAT, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*")
+    await app.edit_message_text(ORIGIN_CHAT, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*", reply_markup=cancel_button)
     await app.stop() 
     return video_path, sub_path, msg_id
 
@@ -104,7 +112,7 @@ async def encode_phase(video_path, sub_path, msg_id):
     for idx, f in enumerate(os.listdir("fonts")):
         fp = os.path.join("fonts", f)
         ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
+        mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
         if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
     if TASK_TYPE == "hardsub":
@@ -114,7 +122,7 @@ async def encode_phase(video_path, sub_path, msg_id):
             'ffmpeg', '-y', '-i', video_path, '-sn', 
             '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", 
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy'
-        ] + ['-progress', 'pipe:1', output]
+        ] +['-progress', 'pipe:1', output]
         engine_name = "HARDSUB ENGINE"
     else:
         cmd =[
@@ -160,10 +168,14 @@ async def encode_phase(video_path, sub_path, msg_id):
                         f"▸ Velocity  : {speed:.2f}x\n"
                         f"▸ Remaining : ~{get_readable_time(eta)}\n"
                         "──────────────────────────\n"
-                        "⚙ GitHub Cloud Worker"
+                        "⚙ Running on Secure Cloud Queue"
                     )
-                    try: await app.edit_message_text(ORIGIN_CHAT, msg_id, text)
-                    except: pass
+                    try: 
+                        await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
+                    except Exception as e:
+                        if "MESSAGE_DELETED" in str(e).upper() or "MESSAGE_ID_INVALID" in str(e).upper():
+                            proc.terminate()
+                            sys.exit(1)
                     last_up = now
             except: pass
             
@@ -186,7 +198,8 @@ async def upload_phase(output, returncode, msg_id):
         if not os.path.exists(thumb_path):
             await extract_thumbnail(output, thumb_path)
             
-        await app.edit_message_text(ORIGIN_CHAT, msg_id, "▸ Processing Done! Sending to your PM...")
+        try: await app.edit_message_text(ORIGIN_CHAT, msg_id, "▸ Processing Done! Sending to your PM...")
+        except: pass
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
         
         # 1. Send to User PM
@@ -195,16 +208,18 @@ async def upload_phase(output, returncode, msg_id):
             if ORIGIN_CHAT != USER_ID:
                 await app.send_message(ORIGIN_CHAT, f"{cap}\nFile successfully sent to your Private Messages!")
         except Exception as e:
-            await app.send_message(ORIGIN_CHAT, f"❌ I couldn't send the file to your PM. Did you block me or forget to start me? Error: {e}")
+            await app.send_message(ORIGIN_CHAT, f"❌ I couldn't send the file to your PM. Did you block me or forget to start me?")
             
         # 2. Send to Dump Group
         if DUMP_ID != "none":
             try: await app.send_document(chat_id=int(DUMP_ID), document=output, reply_to_message_id=int(THREAD_ID) if THREAD_ID != "none" else None, thumb=thumb_path if os.path.exists(thumb_path) else None, caption=cap)
             except: pass
             
-        await app.delete_messages(ORIGIN_CHAT, msg_id)
+        try: await app.delete_messages(ORIGIN_CHAT, msg_id)
+        except: pass
     else:
-        await app.edit_message_text(ORIGIN_CHAT, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        try: await app.edit_message_text(ORIGIN_CHAT, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        except: pass
     
     await app.stop()
 
