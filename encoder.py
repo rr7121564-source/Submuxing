@@ -1,6 +1,5 @@
 import os, sys, time, asyncio
 import pyrogram.utils
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def patched_get_peer_type(peer_id: int) -> str:
     val = str(peer_id)
@@ -9,6 +8,7 @@ def patched_get_peer_type(peer_id: int) -> str:
     else: return "user"
 
 pyrogram.utils.get_peer_type = patched_get_peer_type
+
 from pyrogram import Client
 
 API_ID = int(os.getenv("API_ID"))
@@ -19,20 +19,11 @@ TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
 RENAME = os.getenv("RENAME", "output.mp4")
-
-# Group/PM routing
-USER_ID = int(os.getenv("USER_ID"))
-ORIGIN_CHAT = int(os.getenv("ORIGIN_CHAT"))
+CHAT_ID = int(os.getenv("CHAT_ID"))
 DUMP_ID = os.getenv("DUMP_ID")
 THREAD_ID = os.getenv("THREAD_ID")
 
-# Custom Settings
-THUMB_ID = os.getenv("THUMB_ID")
-FONT_ID = os.getenv("FONT_ID")
-LOGO_ID = os.getenv("LOGO_ID")
-
 last_edit_time = 0
-cancel_button = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data="cancel_gh")]])
 
 def get_readable_time(seconds: int) -> str:
     result = ""
@@ -63,48 +54,31 @@ async def progress_bar(current, total, app, msg_id, action_text):
             bar = "▓" * filled + "░" * (bar_length - filled)
             
             text = (
-                f"🎬  CLOUD WORKER \n"
+                f"🎬  GITHUB WORKER \n"
                 "──────────────────────────\n"
                 f"▸ Status    : {action_text}\n"
                 f"▸ Progress  : {bar}  {perc:.1f}%\n"
                 f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 "──────────────────────────\n"
-                "⚙ Running on Secure Cloud Queue"
+                "⚙ Running on Cloud Engine"
             )
-            await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
+            await app.edit_message_text(CHAT_ID, msg_id, text)
             last_edit_time = now
-        except Exception as e:
-            if "DELETED" in str(e).upper() or "INVALID" in str(e).upper():
-                sys.exit(1)
+        except: pass
 
 async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    status_msg = await app.send_message(ORIGIN_CHAT, "⚙️ Cloud Worker: Downloading Source...", reply_markup=cancel_button)
+    status_msg = await app.send_message(CHAT_ID, "⚙️ Worker Triggered: Preparing...")
     msg_id = status_msg.id
     
-    os.makedirs("fonts", exist_ok=True)
     video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
-    
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
         sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
         
-    if THUMB_ID != "none":
-        try: await app.download_media(THUMB_ID, file_name="thumb.jpg")
-        except: pass
-        
-    if FONT_ID != "none":
-        for idx, fid in enumerate(FONT_ID.split(',')):
-            try: await app.download_media(fid, file_name=f"fonts/custom_font_{idx}.ttf")
-            except: pass
-            
-    if LOGO_ID != "none":
-        try: await app.download_media(LOGO_ID, file_name="logo.png")
-        except: pass
-        
-    await app.edit_message_text(ORIGIN_CHAT, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*", reply_markup=cancel_button)
+    await app.edit_message_text(CHAT_ID, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*")
     await app.stop() 
     return video_path, sub_path, msg_id
 
@@ -113,37 +87,28 @@ async def encode_phase(video_path, sub_path, msg_id):
     duration = await get_duration(video_path)
     
     font_args =[]
+    os.makedirs("fonts", exist_ok=True)
     for idx, f in enumerate(os.listdir("fonts")):
         fp = os.path.join("fonts", f)
         ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
+        mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
         if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
     if TASK_TYPE == "hardsub":
         abs_sub = os.path.abspath(sub_path).replace('\\', '/').replace(':', '\\:')
         fonts_dir = os.path.abspath("fonts").replace('\\', '/').replace(':', '\\:')
-        vf_sub = f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'"
-        
-        if LOGO_ID != "none" and os.path.exists("logo.png"):
-            # Put Subtitle AND Logo Overlay (Top Right corner)
-            cmd =[
-                'ffmpeg', '-y', '-i', video_path, '-i', 'logo.png', '-sn', 
-                '-filter_complex', f"[0:v]{vf_sub}[v];[v][1:v]overlay=W-w-10:10", 
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
-            ]
-        else:
-            cmd =[
-                'ffmpeg', '-y', '-i', video_path, '-sn', 
-                '-vf', vf_sub, 
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
-            ]
+        cmd =[
+            'ffmpeg', '-y', '-i', video_path, '-sn', 
+            '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", 
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy'
+        ] + ['-progress', 'pipe:1', output]
         engine_name = "HARDSUB ENGINE"
     else:
         cmd =[
             'ffmpeg', '-y', '-i', video_path, 
             '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
             '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy'
-        ] + font_args +['-progress', 'pipe:1', output]
+        ] + font_args + ['-progress', 'pipe:1', output]
         engine_name = "COMPRESSION ENGINE"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -182,14 +147,10 @@ async def encode_phase(video_path, sub_path, msg_id):
                         f"▸ Velocity  : {speed:.2f}x\n"
                         f"▸ Remaining : ~{get_readable_time(eta)}\n"
                         "──────────────────────────\n"
-                        "⚙ Running on Secure Cloud Queue"
+                        "⚙ GitHub Cloud Worker"
                     )
-                    try: 
-                        await app.edit_message_text(ORIGIN_CHAT, msg_id, text, reply_markup=cancel_button)
-                    except Exception as e:
-                        if "DELETED" in str(e).upper() or "INVALID" in str(e).upper():
-                            proc.terminate()
-                            sys.exit(1)
+                    try: await app.edit_message_text(CHAT_ID, msg_id, text)
+                    except: pass
                     last_up = now
             except: pass
             
@@ -209,29 +170,27 @@ async def upload_phase(output, returncode, msg_id):
     
     if returncode == 0 and os.path.exists(output):
         thumb_path = "thumb.jpg"
-        if not os.path.exists(thumb_path):
-            await extract_thumbnail(output, thumb_path)
-            
-        try: await app.edit_message_text(ORIGIN_CHAT, msg_id, "▸ Processing Done! Sending to your PM...")
-        except: pass
+        has_thumb = await extract_thumbnail(output, thumb_path)
+        
+        await app.edit_message_text(CHAT_ID, msg_id, "▸ Processing Done! Starting Fresh Upload...")
+        
+        target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
+        thread = int(THREAD_ID) if THREAD_ID != "none" else None
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
         
         try:
-            await app.send_document(chat_id=USER_ID, document=output, thumb=thumb_path if os.path.exists(thumb_path) else None, caption=cap, progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video"))
-            if ORIGIN_CHAT != USER_ID:
-                await app.send_message(ORIGIN_CHAT, f"{cap}\nFile successfully sent to your Private Messages!")
+            await app.send_document(
+                chat_id=target_chat, document=output, reply_to_message_id=thread,
+                thumb=thumb_path if has_thumb else None, caption=cap,
+                progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
+            )
+            if target_chat != CHAT_ID:
+                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully dumped to Group!")
+            await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
-            await app.send_message(ORIGIN_CHAT, f"❌ I couldn't send the file to your PM. Did you block me or forget to start me?")
-            
-        if DUMP_ID != "none":
-            try: await app.send_document(chat_id=int(DUMP_ID), document=output, reply_to_message_id=int(THREAD_ID) if THREAD_ID != "none" else None, thumb=thumb_path if os.path.exists(thumb_path) else None, caption=cap)
-            except: pass
-            
-        try: await app.delete_messages(ORIGIN_CHAT, msg_id)
-        except: pass
+            await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
     else:
-        try: await app.edit_message_text(ORIGIN_CHAT, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
-        except: pass
+        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
     
     await app.stop()
 
