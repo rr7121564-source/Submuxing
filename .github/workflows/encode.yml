@@ -11,24 +11,12 @@ on:
         required: true
       rename:
         required: true
-      user_id:
-        required: true
-      origin_chat:
+      chat_id:
         required: true
       dump_id:
         required: true
       thread_id:
         required: true
-      thumb_id:
-        required: true
-      font_id:
-        required: true
-      logo_id:
-        required: true
-
-concurrency:
-  group: encoding-queue
-  cancel-in-progress: false
 
 jobs:
   encode:
@@ -57,11 +45,7 @@ jobs:
           VIDEO_ID: ${{ github.event.inputs.video_id }}
           SUB_ID: ${{ github.event.inputs.sub_id }}
           RENAME: ${{ github.event.inputs.rename }}
-          USER_ID: ${{ github.event.inputs.user_id }}
-          ORIGIN_CHAT: ${{ github.event.inputs.origin_chat }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
           DUMP_ID: ${{ github.event.inputs.dump_id }}
           THREAD_ID: ${{ github.event.inputs.thread_id }}
-          THUMB_ID: ${{ github.event.inputs.thumb_id }}
-          FONT_ID: ${{ github.event.inputs.font_id }}
-          LOGO_ID: ${{ github.event.inputs.logo_id }}
         run: python encoder.py
