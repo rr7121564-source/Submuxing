@@ -10,11 +10,16 @@ def init_db():
         c.execute('CREATE TABLE IF NOT EXISTS processed (id TEXT PRIMARY KEY)')
         c.execute('CREATE TABLE IF NOT EXISTS auth_users (user_id INTEGER PRIMARY KEY)')
         c.execute('CREATE TABLE IF NOT EXISTS auth_chats (chat_id INTEGER PRIMARY KEY)')
-        c.execute('CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, rename_format TEXT, thumb_id TEXT, font_id TEXT, logo_id TEXT)')
+        # Table create karte waqt dump_id column bhi shamil karein
+        c.execute('CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER PRIMARY KEY, rename_format TEXT, thumb_id TEXT, font_id TEXT, logo_id TEXT, dump_id TEXT)')
         
-        # Migration for existing databases
+        # Migration for existing databases (Purane users ke liye columns add karna)
         try: c.execute('ALTER TABLE user_settings ADD COLUMN logo_id TEXT')
         except: pass
+
+        try: c.execute('ALTER TABLE user_settings ADD COLUMN dump_id TEXT')
+        except: pass
+
         conn.commit()
 
 # --- ACCESS CONTROL ---
@@ -71,3 +76,14 @@ def add_processed_id(key):
             return True
         except sqlite3.IntegrityError:
             return False
+
+def set_user_dump(user_id, dump_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", (user_id,))
+        conn.execute("UPDATE user_settings SET dump_id = ? WHERE user_id = ?", (str(dump_id) if dump_id else None, user_id))
+        conn.commit()
+
+def get_user_dump(user_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        res = conn.execute("SELECT dump_id FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+        return res[0] if res and res[0] else None
