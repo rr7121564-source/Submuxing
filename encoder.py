@@ -10,6 +10,7 @@ def patched_get_peer_type(peer_id: int) -> str:
 pyrogram.utils.get_peer_type = patched_get_peer_type
 
 from pyrogram import Client
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -20,8 +21,22 @@ VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
 RENAME = os.getenv("RENAME", "output.mp4")
 CHAT_ID = int(os.getenv("CHAT_ID"))
-DUMP_ID = os.getenv("DUMP_ID")
 THREAD_ID = os.getenv("THREAD_ID")
+
+raw_dump = os.getenv("DUMP_ID", "none")
+STATUS_MSG_ID = None
+if ":::" in raw_dump:
+    parts = raw_dump.split(":::")
+    DUMP_ID = parts[0]
+    LOGO_ID = parts[1]
+    LOGO_SIZE = parts[2]
+    LOGO_POS = parts[3]
+    if len(parts) > 4: STATUS_MSG_ID = parts[4]
+else:
+    DUMP_ID = raw_dump
+    LOGO_ID = "none"
+    LOGO_SIZE = "medium"
+    LOGO_POS = "tr"
 
 last_edit_time = 0
 
@@ -53,16 +68,18 @@ async def progress_bar(current, total, app, msg_id, action_text):
             filled = int((perc / 100) * bar_length)
             bar = "▓" * filled + "░" * (bar_length - filled)
             
+            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
             text = (
                 f"🎬  GITHUB WORKER \n"
                 "──────────────────────────\n"
+                f"📦 File     : `{RENAME}`\n"
                 f"▸ Status    : {action_text}\n"
                 f"▸ Progress  : {bar}  {perc:.1f}%\n"
                 f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 "──────────────────────────\n"
                 "⚙ Running on Cloud Engine"
             )
-            await app.edit_message_text(CHAT_ID, msg_id, text)
+            await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
             last_edit_time = now
         except: pass
 
@@ -70,7 +87,12 @@ async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    status_msg = await app.send_message(CHAT_ID, "⚙️ Worker Triggered: Preparing...")
+    if STATUS_MSG_ID:
+        try: await app.delete_messages(CHAT_ID, int(STATUS_MSG_ID))
+        except: pass
+        
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+    status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
     msg_id = status_msg.id
     
     video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
@@ -78,37 +100,57 @@ async def download_phase():
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
         sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
         
-    await app.edit_message_text(CHAT_ID, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*")
+    logo_path = None
+    if TASK_TYPE == "hardsub" and LOGO_ID != "none":
+        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
+        
+    await app.edit_message_text(CHAT_ID, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
     await app.stop() 
-    return video_path, sub_path, msg_id
+    return video_path, sub_path, logo_path, msg_id
 
-async def encode_phase(video_path, sub_path, msg_id):
+async def encode_phase(video_path, sub_path, logo_path, msg_id):
     output = RENAME
     duration = await get_duration(video_path)
-    
-    font_args =[]
     os.makedirs("fonts", exist_ok=True)
-    for idx, f in enumerate(os.listdir("fonts")):
-        fp = os.path.join("fonts", f)
-        ext = os.path.splitext(f)[1].lower()
-        mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
-        if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
-
+    
     if TASK_TYPE == "hardsub":
-        abs_sub = os.path.abspath(sub_path).replace('\\', '/').replace(':', '\\:')
+        abs_sub = os.path.abspath(sub_path).replace('\\', '/').replace(':', '\\:') if sub_path else ""
         fonts_dir = os.path.abspath("fonts").replace('\\', '/').replace(':', '\\:')
-        cmd =[
-            'ffmpeg', '-y', '-i', video_path, '-sn', 
-            '-vf', f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'", 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy'
-        ] + ['-progress', 'pipe:1', output]
+        sub_filter = f"subtitles='{abs_sub}':fontsdir='{fonts_dir}'" if abs_sub else ""
+
+        if logo_path:
+            abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
+            scale_val = "150:-1" if LOGO_SIZE == "small" else "250:-1" if LOGO_SIZE == "medium" else "350:-1"
+            if LOGO_POS == "tl": pos_val = "10:10"
+            elif LOGO_POS == "tr": pos_val = "main_w-overlay_w-10:10"
+            elif LOGO_POS == "bl": pos_val = "10:main_h-overlay_h-10"
+            else: pos_val = "main_w-overlay_w-10:main_h-overlay_h-10"
+            
+            filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
+            
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, '-i', abs_logo,
+                '-filter_complex', filter_complex,
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy',
+                '-progress', 'pipe:1', output
+            ]
+        else:
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, '-sn', 
+                '-vf', sub_filter, 
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy',
+                '-progress', 'pipe:1', output
+            ] if sub_filter else[
+                'ffmpeg', '-y', '-i', video_path, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
+            ]
         engine_name = "HARDSUB ENGINE"
     else:
         cmd =[
             'ffmpeg', '-y', '-i', video_path, 
             '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy'
-        ] + font_args + ['-progress', 'pipe:1', output]
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+            '-progress', 'pipe:1', output
+        ]
         engine_name = "COMPRESSION ENGINE"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -139,9 +181,11 @@ async def encode_phase(video_path, sub_path, msg_id):
                     filled = int((perc / 100) * bar_length)
                     bar = "▓" * filled + "░" * (bar_length - filled)
                     
+                    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
                     text = (
                         f"🎬  {engine_name} \n"
                         "──────────────────────────\n"
+                        f"📦 File     : `{RENAME}`\n"
                         f"▸ Status    : Processing Frame...\n"
                         f"▸ Progress  : {bar}  {perc:.2f}%\n"
                         f"▸ Velocity  : {speed:.2f}x\n"
@@ -149,7 +193,7 @@ async def encode_phase(video_path, sub_path, msg_id):
                         "──────────────────────────\n"
                         "⚙ GitHub Cloud Worker"
                     )
-                    try: await app.edit_message_text(CHAT_ID, msg_id, text)
+                    try: await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
                     except: pass
                     last_up = now
             except: pass
@@ -172,11 +216,11 @@ async def upload_phase(output, returncode, msg_id):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, "▸ Processing Done! Starting Fresh Upload...")
+        await app.edit_message_text(CHAT_ID, msg_id, f"▸ Processing Done! Starting Fresh Upload...\n📦 File: `{RENAME}`")
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
-        cap = f"✅ {TASK_TYPE.upper()} COMPLETE"
+        cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
         
         try:
             await app.send_document(
@@ -196,6 +240,6 @@ async def upload_phase(output, returncode, msg_id):
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    vid, sub, mid = loop.run_until_complete(download_phase())
-    out, rcode = loop.run_until_complete(encode_phase(vid, sub, mid))
+    vid, sub, logo, mid = loop.run_until_complete(download_phase())
+    out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
     loop.run_until_complete(upload_phase(out, rcode, mid))
