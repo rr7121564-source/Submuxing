@@ -19,16 +19,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
-CHAT_ID = int(os.getenv("CHAT_ID"))
-THREAD_ID = os.getenv("THREAD_ID")
-
-# --- RESOLUTION LOGIC ADDED HERE ---
 raw_rename = os.getenv("RENAME", "output.mp4")
 if ":::" in raw_rename:
     RESOLUTION, RENAME = raw_rename.split(":::", 1)
 else:
     RESOLUTION, RENAME = "Original", raw_rename
-# -----------------------------------
+CHAT_ID = int(os.getenv("CHAT_ID"))
+THREAD_ID = os.getenv("THREAD_ID")
 
 raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
@@ -73,15 +70,14 @@ async def progress_bar(current, total, app, msg_id, action_text):
             
             cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
             text = (
-                "━━━━━━━━━━━━━━━━━━━\n"
-                "☁️ 𝗚𝗜𝗧𝗛𝗨𝗕 𝗪𝗢𝗥𝗞𝗘𝗥\n"
-                "━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 𝗙𝗶𝗹𝗲: `{RENAME}`\n"
-                f"▸ 𝗦𝘁𝗮𝘁𝘂𝘀: {action_text}\n\n"
-                f"📊 𝗣𝗿𝗼𝗴𝗿𝗲𝘀𝘀: [{bar}] {perc:.1f}%\n"
-                f"💾 𝗦𝗶𝘇𝗲: {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n\n"
-                "⚙ 𝗘𝗻𝗴𝗶𝗻𝗲: Cloud Engine\n"
-                "━━━━━━━━━━━━━━━━━━━"
+                f"🎬  GITHUB WORKER \n"
+                "──────────────────────────\n"
+                f"📦 File     : `{RENAME}`\n"
+                f"▸ Status    : {action_text}\n"
+                f"▸ Progress  : {bar}  {perc:.1f}%\n"
+                f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
+                "──────────────────────────\n"
+                "⚙ Running on Cloud Engine"
             )
             await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
             last_edit_time = now
@@ -128,6 +124,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
 
         if logo_path:
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
+            # FIXED POSITION (Top Right) AND SIZE (Small, width 120px)
             scale_val = "120:-1"
             pos_val = "main_w-overlay_w-15:15"
             
@@ -150,7 +147,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             ]
         engine_name = "HARDSUB ENGINE"
     else:
-        # --- RESOLUTION SCALING LOGIC ADDED HERE ---
         vf_scale =[]
         if RESOLUTION == "720p": vf_scale = ['-vf', 'scale=-1:720']
         elif RESOLUTION == "480p": vf_scale = ['-vf', 'scale=-1:480']
@@ -163,7 +159,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             '-progress', 'pipe:1', output
         ]
         engine_name = f"COMPRESS ENGINE ({RESOLUTION})"
-        # -------------------------------------------
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
@@ -195,16 +190,15 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     
                     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
                     text = (
-                        "━━━━━━━━━━━━━━━━━━━\n"
-                        f"🎬 {engine_name}\n"
-                        "━━━━━━━━━━━━━━━━━━━\n"
-                        f"📦 𝗙𝗶𝗹𝗲: `{RENAME}`\n"
-                        f"▸ 𝗦𝘁𝗮𝘁𝘂𝘀: Processing Frame...\n\n"
-                        f"📊 𝗣𝗿𝗼𝗴𝗿𝗲𝘀𝘀: [{bar}] {perc:.2f}%\n"
-                        f"⚡ 𝗩𝗲𝗹𝗼𝗰𝗶𝘁𝘆: {speed:.2f}x\n"
-                        f"⏱ 𝗥𝗲𝗺𝗮𝗶𝗻𝗶𝗻𝗴: ~{get_readable_time(eta)}\n\n"
-                        "⚙ 𝗘𝗻𝗴𝗶𝗻𝗲: GitHub Cloud Worker\n"
-                        "━━━━━━━━━━━━━━━━━━━"
+                        f"🎬  {engine_name} \n"
+                        "──────────────────────────\n"
+                        f"📦 File     : `{RENAME}`\n"
+                        f"▸ Status    : Processing Frame...\n"
+                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
+                        f"▸ Velocity  : {speed:.2f}x\n"
+                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
+                        "──────────────────────────\n"
+                        "⚙ GitHub Cloud Worker"
                     )
                     try: await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
                     except: pass
@@ -236,7 +230,6 @@ async def upload_phase(output, returncode, msg_id):
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
         
         try:
-            # Using 'thumb' as per original code to prevent Pyrogram errors
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
