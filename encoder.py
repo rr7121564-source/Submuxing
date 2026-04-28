@@ -152,13 +152,21 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
         if RESOLUTION == "720p": vf_scale =['-vf', 'scale=-1:720']
         elif RESOLUTION == "480p": vf_scale =['-vf', 'scale=-1:480']
         
+        # SMART MAPPING: Map video, audio, subs. Map fonts ONLY if output is MKV.
         cmd =[
             'ffmpeg', '-y', '-i', video_path, 
-            '-map', '0:v', '-map', '0:a?', '-map', '0:s?', '-map', '0:t?'
-        ] + vf_scale +[
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy', '-c:t', 'copy',
-            '-progress', 'pipe:1', output
+            '-map', '0:v:0', '-map', '0:a?', '-map', '0:s?'
         ]
+        if output.lower().endswith('.mkv'):
+            cmd.extend(['-map', '0:t?'])
+            
+        cmd.extend(vf_scale)
+        
+        # SMART COPY: '-c copy' copies all mapped streams safely, '-c:v libx264' overrides only video to compress it.
+        cmd.extend([
+            '-c', 'copy', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+            '-progress', 'pipe:1', output
+        ])
         engine_name = f"COMPRESS ENGINE ({RESOLUTION})"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -232,9 +240,10 @@ async def upload_phase(output, returncode, msg_id):
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
         
         try:
+            # FIXED: Pyrogram uses 'thumb', not 'thumbnail'
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
-                thumbnail=thumb_path if has_thumb else None, caption=cap,
+                thumb=thumb_path if has_thumb else None, caption=cap,
                 progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
             )
             if target_chat != CHAT_ID:
