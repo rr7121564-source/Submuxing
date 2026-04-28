@@ -2,6 +2,7 @@ import os
 import asyncio
 import shutil
 import time
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from config import active_processes
 
 def clean_temp_files(path):
@@ -35,8 +36,6 @@ async def extract_thumbnail(video_path, thumb_path):
     return os.path.exists(thumb_path)
 
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_name, user_id, mode="mux", task_fonts_dir="fonts"):
-    # Note: InlineKeyboardMarkup import ki ab zarurat nahi hai agar button nahi chahiye
-    
     duration = await get_duration(mkv_path)
     font_args =[]
     
@@ -44,7 +43,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
         for idx, f in enumerate(os.listdir(task_fonts_dir)):
             fp = os.path.join(task_fonts_dir, f)
             ext = os.path.splitext(f)[1].lower()
-            mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
+            mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
             if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
     sub_ext = os.path.splitext(sub_path)[1].lower()
@@ -64,6 +63,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
     
     start_time = time.time()
     last_up = 0
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{proc_key}_local")]])
 
     while True:
         line = await proc.stdout.readline()
@@ -97,8 +97,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
                         "⚙️ *Engine: FFmpeg Local Engine*"
                     )
                     
-                    # Button (reply_markup) wala hissa yahan se hata diya gaya hai
-                    try: await status_msg.edit_text(text, parse_mode="Markdown")
+                    try: await status_msg.edit_text(text, parse_mode="Markdown", reply_markup=cancel_kb)
                     except: pass
                     last_up = now
             except: pass
