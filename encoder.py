@@ -1,4 +1,4 @@
-import os, sys, time, asyncio
+import os, sys, time, asyncio, traceback
 import pyrogram.utils
 
 def patched_get_peer_type(peer_id: int) -> str:
@@ -12,15 +12,15 @@ pyrogram.utils.get_peer_type = patched_get_peer_type
 from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-TASK_TYPE = os.getenv("TASK_TYPE")
-VIDEO_ID = os.getenv("VIDEO_ID")
-SUB_ID = os.getenv("SUB_ID")
-CHAT_ID = int(os.getenv("CHAT_ID"))
-THREAD_ID = os.getenv("THREAD_ID")
+TASK_TYPE = os.getenv("TASK_TYPE", "compress")
+VIDEO_ID = os.getenv("VIDEO_ID", "")
+SUB_ID = os.getenv("SUB_ID", "none")
+CHAT_ID = int(os.getenv("CHAT_ID", "0"))
+THREAD_ID = os.getenv("THREAD_ID", "none")
 
 raw_rename = os.getenv("RENAME", "output.mp4")
 if ":::" in raw_rename:
@@ -85,10 +85,7 @@ async def progress_bar(current, total, app, msg_id, action_text):
             last_edit_time = now
         except: pass
 
-async def download_phase():
-    app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
+async def download_phase(app):
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
     
     if STATUS_MSG_ID:
@@ -111,10 +108,9 @@ async def download_phase():
         logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
         
     await app.edit_message_text(CHAT_ID, msg_id, f"🔥 Starting FFmpeg Engine...\n📦 File: `{RENAME}`\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
-    await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
-async def encode_phase(video_path, sub_path, logo_path, msg_id):
+async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
     output = RENAME
     duration = await get_duration(video_path)
     os.makedirs("fonts", exist_ok=True)
@@ -149,10 +145,9 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
         engine_name = "HARDSUB ENGINE"
     else:
         vf_scale =[]
-        if RESOLUTION == "720p": vf_scale =['-vf', 'scale=-1:720']
-        elif RESOLUTION == "480p": vf_scale =['-vf', 'scale=-1:480']
+        if RESOLUTION == "720p": vf_scale = ['-vf', 'scale=-1:720']
+        elif RESOLUTION == "480p": vf_scale = ['-vf', 'scale=-1:480']
         
-        # SMART MAPPING: Map video, audio, subs. Map fonts ONLY if output is MKV.
         cmd =[
             'ffmpeg', '-y', '-i', video_path, 
             '-map', '0:v:0', '-map', '0:a?', '-map', '0:s?'
@@ -162,16 +157,17 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             
         cmd.extend(vf_scale)
         
-        # SMART COPY: '-c copy' copies all mapped streams safely, '-c:v libx264' overrides only video to compress it.
+        # Explicitly defining codecs to avoid -c copy conflict
         cmd.extend([
-            '-c', 'copy', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
-            '-progress', 'pipe:1', output
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34',
+            '-c:a', 'copy', '-c:s', 'copy'
         ])
+        if output.lower().endswith('.mkv'):
+            cmd.extend(['-c:t', 'copy'])
+            
+        cmd.extend(['-progress', 'pipe:1', output])
         engine_name = f"COMPRESS ENGINE ({RESOLUTION})"
 
-    app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     start_time = time.time()
     last_up = 0
@@ -216,7 +212,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             except: pass
             
     await proc.wait()
-    await app.stop()
     return output, proc.returncode
 
 async def extract_thumbnail(video_path, thumb_path):
@@ -225,10 +220,7 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-async def upload_phase(output, returncode, msg_id):
-    app = Client("worker_up", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
+async def upload_phase(app, output, returncode, msg_id):
     if returncode == 0 and os.path.exists(output):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
@@ -236,11 +228,10 @@ async def upload_phase(output, returncode, msg_id):
         await app.edit_message_text(CHAT_ID, msg_id, f"▸ Processing Done! Starting Fresh Upload...\n📦 File: `{RENAME}`")
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
-        thread = int(THREAD_ID) if THREAD_ID != "none" else None
+        thread = int(THREAD_ID) if THREAD_ID and THREAD_ID != "none" else None
         cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
         
         try:
-            # FIXED: Pyrogram uses 'thumb', not 'thumbnail'
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
@@ -252,12 +243,24 @@ async def upload_phase(output, returncode, msg_id):
         except Exception as e:
             await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
-    
-    await app.stop()
+        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video. (Exit Code: {returncode})")
+
+async def main():
+    app = Client("github_worker", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    await app.start()
+    msg_id = int(STATUS_MSG_ID) if STATUS_MSG_ID else None
+    try:
+        vid, sub, logo, msg_id = await download_phase(app)
+        out, rcode = await encode_phase(app, vid, sub, logo, msg_id)
+        await upload_phase(app, out, rcode, msg_id)
+    except Exception as e:
+        err = traceback.format_exc()
+        print(err)
+        if msg_id:
+            try: await app.edit_message_text(CHAT_ID, msg_id, f"❌ **CRITICAL WORKER ERROR:**\n\n`{str(e)}`")
+            except: pass
+    finally:
+        await app.stop()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    vid, sub, logo, mid = loop.run_until_complete(download_phase())
-    out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
-    loop.run_until_complete(upload_phase(out, rcode, mid))
+    asyncio.run(main())
