@@ -56,7 +56,6 @@ async def progress_bar(current, total, app, msg_id, action_text):
             text = (
                 f"🎬  GITHUB WORKER \n"
                 "──────────────────────────\n"
-                f"▸ File    : {file_name}\n"
                 f"▸ Status    : {action_text}\n"
                 f"▸ Progress  : {bar}  {perc:.1f}%\n"
                 f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
@@ -143,7 +142,6 @@ async def encode_phase(video_path, sub_path, msg_id):
                     text = (
                         f"🎬  {engine_name} \n"
                         "──────────────────────────\n"
-                        f"▸ File    : {file_name}\n"
                         f"▸ Status    : Processing Frame...\n"
                         f"▸ Progress  : {bar}  {perc:.2f}%\n"
                         f"▸ Velocity  : {speed:.2f}x\n"
