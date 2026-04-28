@@ -121,8 +121,8 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
         if logo_path:
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
             # FIXED POSITION (Top Right) AND SIZE (Small, width 120px)
-            scale_val = "120:-1"
-            pos_val = "main_w-overlay_w-15:15"
+            scale_val = "150:-1"
+            pos_val = "main_w-overlay_w-10:10"
             
             filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
             
