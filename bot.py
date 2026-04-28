@@ -6,30 +6,21 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
-from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, active_processes, EXTRACT_DATA, LANG_MAP, GITHUB_TOKEN, REPO_NAME
+from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, github_task_lock, active_processes, EXTRACT_DATA, LANG_MAP, GITHUB_TOKEN, REPO_NAME
 from database import init_db, is_user_auth, is_chat_auth, add_processed_id
 from bot_utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
 
 # --- GLOBAL VARIABLES & DB ---
 current_active_tasks = 0
+current_github_tasks = 0
 all_tasks = set()
+ACTIVE_STATUS_MSGS = {} # Track active status messages to delete on clear
 RENAME_PREF = {}
 
 def init_bot_db():
     with sqlite3.connect("bot_management.db") as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS topics (letter TEXT PRIMARY KEY, thread_id INTEGER)")
         conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-
-def get_dump_id():
-    with sqlite3.connect("bot_management.db") as conn:
-        res = conn.execute("SELECT value FROM settings WHERE key='dump_id'").fetchone()
-        return int(res[0]) if res and res[0] else None
-
-def set_dump_id(chat_id):
-    with sqlite3.connect("bot_management.db") as conn:
-        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('dump_id', ?)", (str(chat_id),))
-        conn.execute("DELETE FROM topics") 
-        conn.commit()
 
 def get_thread_id(letter):
     with sqlite3.connect("bot_management.db") as conn:
@@ -52,7 +43,7 @@ async def delete_messages(bot, chat_id, message_ids):
             try: await bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except: pass
 
-# --- GITHUB TRIGGER LOGIC ---
+# --- GITHUB TRIGGER & STATUS LOGIC ---
 def _send_to_github(task):
     url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/encode.yml/dispatches"
     headers = {
@@ -69,6 +60,57 @@ def _send_to_github(task):
 async def trigger_github(task):
     return await asyncio.to_thread(_send_to_github, task)
 
+def _is_github_busy():
+    url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs"
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    try:
+        r = requests.get(url, headers=headers)
+        if r.status_code == 200:
+            runs = r.json().get("workflow_runs", [])
+            for run in runs:
+                if run.get("status") in ["in_progress", "queued", "requested"]:
+                    return True
+        return False
+    except: return False
+
+def _cancel_all_github_runs():
+    """Stops all active encoding workflows on GitHub with proper headers."""
+    # Base URL for actions runs
+    url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    try:
+        # 1. Pehle saare active runs ki list lo
+        r = requests.get(url, headers=headers)
+        if r.status_code == 200:
+            runs = r.json().get("workflow_runs", [])
+            for run in runs:
+                status = run.get("status")
+                # Sirf "in_progress", "queued", ya "requested" ko cancel karein
+                if status in ["in_progress", "queued", "requested", "waiting"]:
+                    run_id = run.get("id")
+                    cancel_url = f"{url}/{run_id}/cancel"
+                    # 2. Cancel request bhejo
+                    res = requests.post(cancel_url, headers=headers)
+                    if res.status_code == 202:
+                        print(f"✅ GitHub Run {run_id} successfully requested for cancellation.")
+                    else:
+                        print(f"❌ Failed to cancel run {run_id}: {res.text}")
+            return True
+        else:
+            print(f"❌ Failed to fetch GitHub runs: {r.text}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Error in GitHub Cancel Logic: {e}")
+        return False
+
+async def wait_for_github_free():
+    while await asyncio.to_thread(_is_github_busy):
+        await asyncio.sleep(20)
+
 # --- AUTO RENAME LOGIC ---
 def auto_rename(orig_name):
     try:
@@ -82,7 +124,7 @@ def auto_rename(orig_name):
         title_part = re.sub(r'\[.*?\]', '', title_part).strip()
         words = title_part.split()
         short_title = " ".join(words[:4]) if len(words) > 0 else "Video"
-        return f"[E{ep}] {short_title}[{quality}] @lpxempire{ext}"
+        return f"[E{ep}] {short_title} [{quality}] @lpxempire{ext}"
     except Exception:
         return orig_name
 
@@ -120,27 +162,43 @@ def help_keyboard():
 
 # --- COMMANDS ---
 async def perform_clear(context):
-    global current_active_tasks, all_tasks, active_processes
+    global current_active_tasks, current_github_tasks, all_tasks, active_processes, ACTIVE_STATUS_MSGS
+    
+    # 1. Cancel GitHub Server Runs
+    await asyncio.to_thread(_cancel_all_github_runs)
+    
+    # 2. Terminate Local Processes (FFmpeg)
     for key, proc in list(active_processes.items()):
         try: proc.terminate()
         except: pass
     active_processes.clear()
+    
+    # 3. Cancel Asyncio Tasks (Queues)
     for task in list(all_tasks):
         try: task.cancel()
         except: pass
+    
+    # 4. Delete all Progress Status Messages from Telegram
+    for chat_id, msg_id in list(ACTIVE_STATUS_MSGS.items()):
+        try: await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except: pass
+    ACTIVE_STATUS_MSGS.clear()
+
     context.user_data.clear()
     EXTRACT_DATA.clear()
+    
+    # 5. Clean Folders
     try:
         if os.path.exists("user_thumbs"):
             for f in os.listdir("user_thumbs"):
-                if "_task_" in f:
-                    os.remove(os.path.join("user_thumbs", f))
+                if "_task_" in f: os.remove(os.path.join("user_thumbs", f))
         for folder in glob.glob("task_*"):
-            if os.path.isdir(folder):
-                shutil.rmtree(folder)
+            if os.path.isdir(folder): shutil.rmtree(folder)
     except: pass
+    
     await asyncio.sleep(0.5)
     current_active_tasks = 0
+    current_github_tasks = 0
     all_tasks.clear()
 
 async def ui_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,19 +209,36 @@ async def ui_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "show_start": await query.message.edit_text(start_text(), reply_markup=start_keyboard())
     elif data == "clear_tasks":
         await perform_clear(context)
-        await query.message.edit_text("🗑️ RAM, Disk & System Cleared Successfully", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="show_start")]]))
+        await query.message.edit_text("🗑️ RAM, Disk & Cloud Tasks Cleared Successfully", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="show_start")]]))
+
+async def cmd_authorize(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: 
+        return
+    if not context.args: 
+        return await update.message.reply_text("⚠️ ID provide karein.\nUsage: `/auth 12345678` ya `/auth -100xxxx`")
+    
+    try:
+        target_id = int(context.args[0])
+        from database import add_auth_user, add_auth_chat
+        if target_id > 0: 
+            add_auth_user(target_id)
+            await update.message.reply_text(f"✅ User {target_id} ko authorize kar diya gaya hai!")
+        else:
+            add_auth_chat(target_id)
+            await update.message.reply_text(f"✅ Group/Chat {target_id} ko authorize kar diya gaya hai!")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid ID format. Sirf numbers use karein.")
 
 async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return await update.message.reply_text("⚠️ Incorrect Format!\nUsage: `/setdump -100XXXXXXXXX`")
-    try:
-        dump_id = int(context.args[0])
-        set_dump_id(dump_id)
-        await update.message.reply_text(f"✅ Dump Group Configured!\n🆔 ID: `{dump_id}`")
-    except ValueError: await update.message.reply_text("❌ Invalid ID Format.")
+    if not context.args: return await update.message.reply_text("Usage: `/setdump -100xxx`")
+    from database import set_user_dump
+    set_user_dump(update.effective_user.id, context.args[0])
+    await update.message.reply_text(" Aapka personal dump set ho gaya!")
 
 async def cmd_deldump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    set_dump_id("")
-    await update.message.reply_text("🗑️ Dump Group Removed!")
+    from database import set_user_dump
+    set_user_dump(update.effective_user.id, None)
+    await update.message.reply_text(" Personal dump removed.")
 
 async def cmd_startname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     RENAME_PREF[update.effective_user.id] = True
@@ -175,7 +250,7 @@ async def cmd_stopname(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await perform_clear(context)
-    await update.message.reply_text("🗑️ RAM, Disk & Tasks Cleared Successfully")
+    await update.message.reply_text("🗑️ RAM, Disk & Cloud Tasks Cleared Successfully")
 
 async def cmd_dthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -213,7 +288,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await context.bot.get_file(photo.file_id)
     try: shutil.copy(photo_file.file_path, thumb_path)
     except: await photo_file.download_to_drive(thumb_path)
-    await update.message.reply_text("🖼️ Cover Saved\n▸ This cover will be applied to your local mkv")
+    await update.message.reply_text("🖼️ Cover Saved\n▸ This cover will be applied to your outputs")
 
 def get_lang_name(code): return LANG_MAP.get(code.lower(), code.title())
 
@@ -315,12 +390,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text(), reply_markup=help_keyboard())
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    # PM CHECK (Sirf Group/Channel ke liye)
+    if update.effective_chat.type in ["group", "supergroup"]:
+        try:
+            await context.bot.send_chat_action(chat_id=user_id, action="typing")
+        except:
+            return await update.message.reply_text(f"❌ [{update.effective_user.first_name}](tg://user?id={user_id}), Pehle mujhe PM me /start kijiye!", parse_mode="Markdown")
+    
     doc = update.message.document or update.message.video
     if not doc: return
     file_name = getattr(doc, 'file_name', None) or "video.mkv"
     ext = os.path.splitext(file_name)[1].lower()
     
-    if 'to_delete' not in context.user_data: context.user_data['to_delete'] =[]
+    if 'to_delete' not in context.user_data: context.user_data['to_delete'] = []
     context.user_data['to_delete'].append(update.message.message_id)
     
     if ext == '.mkv' or ext == '.mp4':
@@ -342,8 +425,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_name = auto_rename(context.user_data['orig_name']) if RENAME_PREF.get(user_id, True) else context.user_data['orig_name']
         context.user_data['final_name'] = final_name
         
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 Hardsub (Send to GitHub)", callback_data="mode_hardsub")],[InlineKeyboardButton("⚡ Softsub (Fast Mux Local)", callback_data="mode_mux")]
-        ])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 Hardsub (Cloud)", callback_data="mode_hardsub")],[InlineKeyboardButton("⚡ Softsub (Local)", callback_data="mode_mux")]])
         mode_msg = await update.message.reply_text("🛠 Choose Processing Mode:", reply_markup=kb)
         context.user_data['to_delete'].append(mode_msg.message_id)
 
@@ -360,16 +442,24 @@ async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.delete()
     await process_dispatch(update, context, final_name, mode=mode)
 
-# --- DISPATCH LOGIC (Decides Local vs GitHub) ---
+# --- DISPATCH LOGIC ---
 async def process_dispatch(update, context, final_name, mode):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    dump_id = get_dump_id()
+    # OLD CODE: dump_id = get_dump_id()
+    # NEW CODE: Niche wali line add karein
+    from database import get_user_dump
+    dump_id = get_user_dump(user_id)
+    
     target_thread = "none"
     folder_letter = "#" 
     
-    # Calculate dump topic string for GitHub to use
+    # Agar user ne dump set kiya hai, to use integer mein badlein
+    if dump_id:
+        try: dump_id = int(dump_id)
+        except: dump_id = None
+
     if dump_id:
         core_name = re.sub(r'\[.*?\]', '', final_name).replace('@lpxempire', '').strip()
         match = re.search(r'[A-Za-z0-9]', core_name)
@@ -380,44 +470,83 @@ async def process_dispatch(update, context, final_name, mode):
         thread = get_thread_id(folder_letter)
         if not thread:
             try:
+                # User ke personal dump_id mein topic banayega
                 topic = await context.bot.create_forum_topic(chat_id=dump_id, name=folder_letter)
                 thread = topic.message_thread_id
                 save_thread_id(folder_letter, thread)
             except: pass
         target_thread = str(thread) if thread else "none"
 
+    # Baaki ka logic (Hardsub/Mux) bilkul same rahega
     if mode in ["hardsub", "compress"]:
-        status = await context.bot.send_message(chat_id, "⏳ Sending Task to GitHub Worker...")
+        global current_github_tasks, all_tasks
         
-        # 🟢 FIX: Agar sub_id Python me None hai, toh use Text format "none" bana do
         actual_sub_id = context.user_data.get('sub_id')
-        if not actual_sub_id:
-            actual_sub_id = "none"
+        if not actual_sub_id: actual_sub_id = "none"
 
-        task = {
+        task_data = {
             "task_type": mode,
             "video_id": context.user_data['mkv_id'],
             "sub_id": actual_sub_id,
             "rename": final_name,
             "chat_id": str(chat_id),
             "dump_id": str(dump_id) if dump_id else "none",
-            "thread_id": target_thread
+            "thread_id": target_thread,
+            "to_delete": context.user_data.get('to_delete', [])
         }
         
-        success, err_msg = await trigger_github(task)
-        if success:
-            await status.edit_text(f"✅ **Sent to GitHub!**\n▸ Mode: {mode.title()}\n▸ Engine: Background Server")
-            await delete_messages(context.bot, chat_id, context.user_data.get('to_delete',[]))
-        else:
-            await status.edit_text(f"❌ **GitHub Trigger Failed!**\n`{err_msg}`")
         context.user_data.clear()
+        current_github_tasks += 1
+        
+        if current_github_tasks > 1:
+            status = await context.bot.send_message(chat_id, f" TASK QUEUED (Cloud Node)\n Status: Pending execution\n Position: #{current_github_tasks - 1}")
+        else:
+            status = await context.bot.send_message(chat_id, " Initializing Cloud Node...")
+            
+        ACTIVE_STATUS_MSGS[chat_id] = status.message_id
+        gh_task = asyncio.create_task(run_github_queue(context, task_data, status))
+        all_tasks.add(gh_task)
+        gh_task.add_done_callback(lambda t: all_tasks.discard(t))
         
     else:
-        # Local Softsub Muxing Process
+        # Local Muxing ke liye dump_id pass ho raha hai
         await start_local_task(update, context, final_name, dump_id, target_thread, folder_letter)
 
+async def run_github_queue(context, data, status):
+    global current_github_tasks, ACTIVE_STATUS_MSGS
+    try:
+        async with github_task_lock:
+            if current_github_tasks == 0: return 
+            
+            await status.edit_text("⏳ SYSTEM: Checking Cloud Node availability...")
+            await wait_for_github_free()
+            
+            await status.edit_text("⏳ SYSTEM: Sending payload to GitHub Worker...")
+            api_payload = {k: v for k, v in data.items() if k != "to_delete"}
+            
+            success, err_msg = await trigger_github(api_payload)
+            if success:
+                await status.edit_text(f"✅ SENT TO CLOUD ENGINE\n◈ Mode: {data['task_type'].upper()}\n◈ Engine: GitHub Worker Node\n\n(Lock active until task completes)")
+                await delete_messages(context.bot, int(data['chat_id']), data['to_delete'])
+                
+                await asyncio.sleep(40)
+                await wait_for_github_free()
+                
+                # Cleanup msg tracking on completion
+                ACTIVE_STATUS_MSGS.pop(int(data['chat_id']), None)
+            else:
+                await status.edit_text(f"❌ CLOUD ERROR: {err_msg}")
+    except asyncio.CancelledError:
+        try: await status.delete()
+        except: pass
+    except Exception as e:
+        try: await status.edit_text(f"❌ System Error: {e}")
+        except: pass
+    finally:
+        current_github_tasks = max(0, current_github_tasks - 1)
+
 async def start_local_task(update, context, final_name, dump_id, target_thread, folder_letter):
-    global current_active_tasks, all_tasks
+    global current_active_tasks, all_tasks, ACTIVE_STATUS_MSGS
     user_id = update.effective_user.id
     msg_list = context.user_data.get('to_delete',[])
     
@@ -439,20 +568,26 @@ async def start_local_task(update, context, final_name, dump_id, target_thread, 
     context.user_data.clear()
     current_active_tasks += 1
     
+    chat_id = update.effective_chat.id
     if current_active_tasks > 1: 
-        status = await context.bot.send_message(update.effective_chat.id, f"⏳ Task Added to Local Queue\n▸ Position : {current_active_tasks - 1}")
+        status = await context.bot.send_message(chat_id, f"⏳ Task Added to Local Queue\n▸ Position : {current_active_tasks - 1}")
     else: 
-        status = await context.bot.send_message(update.effective_chat.id, "▸ Preparing Local Engine")
+        status = await context.bot.send_message(chat_id, "▸ Preparing Local Engine")
         
+    ACTIVE_STATUS_MSGS[chat_id] = status.message_id
     task = asyncio.create_task(run_queue(context, data, status))
     all_tasks.add(task)
     task.add_done_callback(lambda t: all_tasks.discard(t))
 
 async def run_queue(context, data, status):
-    global current_active_tasks
+    global current_active_tasks, ACTIVE_STATUS_MSGS
+    user_id = data['user_id'] 
     try:
         async with global_task_lock:
-            try: await status.edit_text("▸ Preparing Local Engine")
+            # Task start hote hi original messages delete
+            await delete_messages(context.bot, data['chat_id'], data['to_delete'])
+            
+            try: await status.edit_text("  Preparing Local Engine")
             except: pass
             
             tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
@@ -472,53 +607,52 @@ async def run_queue(context, data, status):
                 if data['sub_id']:
                     s_f = await context.bot.get_file(data['sub_id'], read_timeout=3600)
                     s_f_path = s_f.file_path
-                    
-                success = await mux_video(m_f.file_path, s_f_path, out, data['chat_id'], status)
                 
+                # --- YAHAN BADLAV KIYA GAYA HAI ---
+                success = await mux_video(
+                    mkv_path=m_f.file_path, 
+                    sub_path=s_f_path, 
+                    output_path=out, 
+                    chat_id=data['chat_id'], 
+                    status_msg=status, 
+                    file_name=data['name'], 
+                    user_id=data['user_id']
+                )
+                # ---------------------------------
+
                 if success:
                     if not has_thumb:
-                        await status.edit_text("▸ Generating Thumbnail")
+                        await status.edit_text("  Generating Thumbnail")
                         has_thumb = await extract_thumbnail(out, thumb_path)
                     
-                    await status.edit_text("▸ Uploading file to Telegram")
-                    
+                    await status.edit_text("  Uploading file to Telegram")
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
                     target_chat = data['dump_id'] if data['dump_id'] else data['chat_id']
                     thread = int(data['target_thread']) if data['target_thread'] != "none" else None
                     
                     try:
-                        cap_text = "✅  MUXING COMPLETE"
-                        try:
-                            sent_msg = await context.bot.send_document(
-                                chat_id=target_chat, message_thread_id=thread,
-                                document=f"file://{out}", thumbnail=thumb_file, caption=cap_text,
-                                read_timeout=7200, write_timeout=7200
-                            )
-                        except Exception as upload_err:
-                            if thread and ("thread" in str(upload_err).lower() or "topic" in str(upload_err).lower()):
-                                delete_thread_id(data['folder_letter'])
-                                sent_msg = await context.bot.send_document(
-                                    chat_id=target_chat, document=f"file://{out}", thumbnail=thumb_file, caption=cap_text,
-                                    read_timeout=7200, write_timeout=7200
-                                )
-                            else: raise upload_err
-                            
-                        if target_chat != data['chat_id']:
-                            await context.bot.send_message(chat_id=data['chat_id'], text=f"{cap_text}\n\nFile dumped to `{data['folder_letter']}` folder.")
+                        cap_text = f"  ✅ MUXING COMPLETE"
+                        await context.bot.send_document(
+                            chat_id=target_chat, message_thread_id=thread,
+                            document=f"file://{out}", thumbnail=thumb_file, caption=cap_text,
+                            read_timeout=7200, write_timeout=7200
+                        )
+                        if str(target_chat) != str(data['chat_id']):
+                            await context.bot.send_message(chat_id=data['chat_id'], text=f"  Muxing Complete!\n\nFile dumped to `{data['folder_letter']}` folder.")
                     finally:
                         if thumb_file: thumb_file.close()
                     
-                    await delete_messages(context.bot, data['chat_id'], data['to_delete'])
+                    ACTIVE_STATUS_MSGS.pop(int(data['chat_id']), None)
                     await status.delete()
                 else: 
-                    await status.edit_text("❌  Process Canceled or Failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear Task", callback_data="clear_tasks")]]))
+                    await status.edit_text("  Failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("  Clear Task", callback_data="clear_tasks")]]))
             
             except asyncio.CancelledError:
-                try: await status.edit_text("❌  Process Canceled.")
+                try: await status.delete()
                 except: pass
                 raise
             except Exception as e:
-                try: await status.edit_text(f"❌ Error: {e}")
+                try: await status.edit_text(f"  Error: {e}")
                 except: pass
             finally: clean_temp_files(tmp)
                 
@@ -529,22 +663,24 @@ async def run_queue(context, data, status):
             try: os.remove(custom_thumb)
             except: pass
 
-async def cancel_cb(update, context):
-    cid = update.effective_chat.id
-    await update.callback_query.answer()
-    if cid in active_processes:
-        active_processes[cid].terminate()
-        await update.callback_query.edit_message_text(
-            "❌  Process Canceled by User.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Clear All Tasks", callback_data="clear_tasks")]])
-        )
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # Local FFmpeg processes cancel karein (sirf is user ke)
+    for key in list(active_processes.keys()):
+        if str(user_id) in str(key):
+            active_processes[key].terminate()
+            del active_processes[key]
+            
+    await update.message.reply_text(" Aapke tasks cancel kar diye gaye hain.")
 
-# --- WEB SERVER & SELF PINGER (ANTI-SLEEP) ---
 class PingHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"Bot is awake and running!")
+        self.wfile.write(b"Bot is awake!")
     def log_message(self, format, *args): pass
 
 def run_dummy_server():
@@ -569,6 +705,7 @@ def main():
     app.add_handler(TypeHandler(Update, block_duplicates), group=-1)
     
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("allow", cmd_authorize))
     app.add_handler(CommandHandler("help", cmd_help)) 
     app.add_handler(CommandHandler("startname", cmd_startname))
     app.add_handler(CommandHandler("stopname", cmd_stopname))
@@ -583,7 +720,6 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_docs))
     
     app.add_handler(CallbackQueryHandler(mode_selection_cb, pattern=r"^mode_"))
-    app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
     app.add_handler(CallbackQueryHandler(ui_cb, pattern=r"^(show_help|show_start|clear_tasks)$"))
     
