@@ -19,7 +19,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
-RENAME = os.getenv("RENAME", "output.mp4")
+raw_rename = os.getenv("RENAME", "output.mp4")
+if ":::" in raw_rename:
+    RESOLUTION, RENAME = raw_rename.split(":::", 1)
+else:
+    RESOLUTION, RENAME = "Original", raw_rename
 CHAT_ID = int(os.getenv("CHAT_ID"))
 THREAD_ID = os.getenv("THREAD_ID")
 
@@ -143,13 +147,19 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             ]
         engine_name = "HARDSUB ENGINE"
     else:
+        vf_scale =[]
+        if RESOLUTION == "720p": vf_scale = ['-vf', 'scale=-1:720']
+        elif RESOLUTION == "480p": vf_scale =['-vf', 'scale=-1:480']
+        
+        # Added -map 0:t? and -c:t copy to preserve fonts/attachments in MKV
         cmd =[
             'ffmpeg', '-y', '-i', video_path, 
-            '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+            '-map', '0:v', '-map', '0:a?', '-map', '0:s?', '-map', '0:t?'
+        ] + vf_scale +[
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy', '-c:t', 'copy',
             '-progress', 'pipe:1', output
         ]
-        engine_name = "COMPRESSION ENGINE"
+        engine_name = f"COMPRESS ENGINE ({RESOLUTION})"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
@@ -223,7 +233,7 @@ async def upload_phase(output, returncode, msg_id):
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
-                thumb=thumb_path if has_thumb else None, caption=cap,
+                thumbnail=thumb_path if has_thumb else None, caption=cap,
                 progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
             )
             if target_chat != CHAT_ID:
