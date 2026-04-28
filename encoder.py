@@ -19,21 +19,20 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
-raw_rename = os.getenv("RENAME", "output.mp4")
-if ":::" in raw_rename:
-    RESOLUTION, RENAME = raw_rename.split(":::", 1)
-else:
-    RESOLUTION, RENAME = "Original", raw_rename
+RENAME = os.getenv("RENAME", "output.mp4")
 CHAT_ID = int(os.getenv("CHAT_ID"))
 THREAD_ID = os.getenv("THREAD_ID")
 
 raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
+RESOLUTION = "original"
+
 if ":::" in raw_dump:
     parts = raw_dump.split(":::")
     DUMP_ID = parts[0]
     LOGO_ID = parts[1]
     if len(parts) > 2: STATUS_MSG_ID = parts[2]
+    if len(parts) > 3: RESOLUTION = parts[3]
 else:
     DUMP_ID = raw_dump
     LOGO_ID = "none"
@@ -124,7 +123,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
 
         if logo_path:
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
-            # FIXED POSITION (Top Right) AND SIZE (Small, width 120px)
             scale_val = "120:-1"
             pos_val = "main_w-overlay_w-15:15"
             
@@ -147,18 +145,23 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             ]
         engine_name = "HARDSUB ENGINE"
     else:
-        vf_scale =[]
-        if RESOLUTION == "720p": vf_scale = ['-vf', 'scale=-1:720']
-        elif RESOLUTION == "480p": vf_scale = ['-vf', 'scale=-1:480']
-        
-        cmd =[
-            'ffmpeg', '-y', '-i', video_path, 
-            '-map', '0:v', '-map', '0:a?', '-map', '0:s?'
-        ] + vf_scale +[
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
-            '-progress', 'pipe:1', output
-        ]
-        engine_name = f"COMPRESS ENGINE ({RESOLUTION})"
+        if RESOLUTION != "original":
+            vf_scale = f"scale=-2:{RESOLUTION}"
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, 
+                '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
+                '-vf', vf_scale,
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+                '-progress', 'pipe:1', output
+            ]
+        else:
+            cmd =[
+                'ffmpeg', '-y', '-i', video_path, 
+                '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+                '-progress', 'pipe:1', output
+            ]
+        engine_name = "COMPRESSION ENGINE"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
