@@ -87,13 +87,19 @@ async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    if STATUS_MSG_ID:
-        try: await app.delete_messages(CHAT_ID, int(STATUS_MSG_ID))
-        except: pass
-        
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
-    status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
-    msg_id = status_msg.id
+    
+    # 🌟 MAGIC HAPPENS HERE: Overwrites old "SENT TO CLOUD ENGINE" message completely
+    if STATUS_MSG_ID:
+        msg_id = int(STATUS_MSG_ID)
+        try:
+            await app.edit_message_text(CHAT_ID, msg_id, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        except:
+            status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+            msg_id = status_msg.id
+    else:
+        status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        msg_id = status_msg.id
     
     video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
     sub_path = None
@@ -104,7 +110,7 @@ async def download_phase():
     if TASK_TYPE == "hardsub" and LOGO_ID != "none":
         logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
         
-    await app.edit_message_text(CHAT_ID, msg_id, "🔥 Starting FFmpeg Engine...\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
+    await app.edit_message_text(CHAT_ID, msg_id, f"🔥 Starting FFmpeg Engine...\n📦 File: `{RENAME}`\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
     await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
