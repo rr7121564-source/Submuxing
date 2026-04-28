@@ -34,13 +34,12 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, mode="mux", task_fonts_dir="fonts"):
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_name, user_id, mode="mux", task_fonts_dir="fonts"):
+    # Note: InlineKeyboardMarkup import ki ab zarurat nahi hai agar button nahi chahiye
     
     duration = await get_duration(mkv_path)
     font_args =[]
     
-    # User-specific fonts directory
     if os.path.exists(task_fonts_dir):
         for idx, f in enumerate(os.listdir(task_fonts_dir)):
             fp = os.path.join(task_fonts_dir, f)
@@ -59,7 +58,9 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, mode="
     ] + font_args +['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    active_processes[chat_id] = proc
+    
+    proc_key = f"{chat_id}_{user_id}"
+    active_processes[proc_key] = proc
     
     start_time = time.time()
     last_up = 0
@@ -75,32 +76,33 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, mode="
                 cur = int(time_str) / 1000000
                 now = time.time()
                 
-                if duration > 0 and (now - last_up) > 3:
+                if duration > 0 and (now - last_up) > 5: 
                     perc = min(100, (cur / duration) * 100)
                     elapsed = now - start_time
                     speed = cur / elapsed if elapsed > 0 else 0
                     eta = (duration - cur) / speed if speed > 0 else 0
                     
-                    bar_length = 14
-                    filled_blocks = int((perc / 100) * bar_length)
-                    bar = "▓" * filled_blocks + "░" * (bar_length - filled_blocks)
+                    bar_length = 12
+                    filled = int((perc / 100) * bar_length)
+                    bar = "▓" * filled + "░" * (bar_length - filled)
                     
                     text = (
-                        "🎬  SUBTITLE SYNC ENGINE \n"
-                        "──────────────────────────\n"
-                        f"▸ Status    : Muxing Subtitle...\n"
-                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
-                        f"▸ Velocity  : {speed:.2f}x\n"
-                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
-                        "──────────────────────────\n"
-                        "⚙ Running silently in background"
+                        "🎬 **MUXING IN PROGRESS**\n"
+                        "───────────────────\n"
+                        f"📦 **File:** `{file_name}`\n"
+                        f"📊 **Progress:** {bar} {perc:.1f}%\n"
+                        f"🚀 **Speed:** {speed:.2f}x\n"
+                        f"⏳ **ETA:** {get_readable_time(eta)}\n"
+                        "───────────────────\n"
+                        "⚙️ *Engine: FFmpeg Local Engine*"
                     )
-                    cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Cancel Process", callback_data=f"cancel_{chat_id}")]])
-                    try: await status_msg.edit_text(text, reply_markup=cancel_markup)
+                    
+                    # Button (reply_markup) wala hissa yahan se hata diya gaya hai
+                    try: await status_msg.edit_text(text, parse_mode="Markdown")
                     except: pass
                     last_up = now
             except: pass
             
     await proc.wait()
-    if chat_id in active_processes: del active_processes[chat_id]
+    if proc_key in active_processes: del active_processes[proc_key]
     return proc.returncode == 0
