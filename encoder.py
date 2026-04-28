@@ -29,14 +29,10 @@ if ":::" in raw_dump:
     parts = raw_dump.split(":::")
     DUMP_ID = parts[0]
     LOGO_ID = parts[1]
-    LOGO_SIZE = parts[2]
-    LOGO_POS = parts[3]
-    if len(parts) > 4: STATUS_MSG_ID = parts[4]
+    if len(parts) > 2: STATUS_MSG_ID = parts[2]
 else:
     DUMP_ID = raw_dump
     LOGO_ID = "none"
-    LOGO_SIZE = "medium"
-    LOGO_POS = "tr"
 
 last_edit_time = 0
 
@@ -89,11 +85,9 @@ async def download_phase():
     
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
     
-    # 🌟 MAGIC HAPPENS HERE: Overwrites old "SENT TO CLOUD ENGINE" message completely
     if STATUS_MSG_ID:
         msg_id = int(STATUS_MSG_ID)
-        try:
-            await app.edit_message_text(CHAT_ID, msg_id, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        try: await app.edit_message_text(CHAT_ID, msg_id, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
         except:
             status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
             msg_id = status_msg.id
@@ -126,11 +120,9 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
 
         if logo_path:
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
-            scale_val = "150:-1" if LOGO_SIZE == "small" else "250:-1" if LOGO_SIZE == "medium" else "350:-1"
-            if LOGO_POS == "tl": pos_val = "10:10"
-            elif LOGO_POS == "tr": pos_val = "main_w-overlay_w-10:10"
-            elif LOGO_POS == "bl": pos_val = "10:main_h-overlay_h-10"
-            else: pos_val = "main_w-overlay_w-10:main_h-overlay_h-10"
+            # FIXED POSITION (Top Right) AND SIZE (Small, width 120px)
+            scale_val = "120:-1"
+            pos_val = "main_w-overlay_w-15:15"
             
             filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
             
