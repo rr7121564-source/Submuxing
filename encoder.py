@@ -12,15 +12,15 @@ pyrogram.utils.get_peer_type = patched_get_peer_type
 from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 TASK_TYPE = os.getenv("TASK_TYPE")
 VIDEO_ID = os.getenv("VIDEO_ID")
 SUB_ID = os.getenv("SUB_ID")
 RENAME = os.getenv("RENAME", "output.mp4")
-CHAT_ID = int(os.getenv("CHAT_ID"))
+CHAT_ID = int(os.getenv("CHAT_ID", 0))
 THREAD_ID = os.getenv("THREAD_ID")
 
 raw_dump = os.getenv("DUMP_ID", "none")
@@ -95,18 +95,26 @@ async def download_phase():
         status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
         msg_id = status_msg.id
     
-    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
+    # SAFETY HACK: Force simple filenames to prevent FFmpeg crashes from special characters!
+    video_path = await app.download_media(VIDEO_ID, file_name="input.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
+    
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
-        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
+        sub_path = await app.download_media(SUB_ID, file_name="input.srt", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
         
     logo_path = None
     if TASK_TYPE == "hardsub" and LOGO_ID != "none":
-        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
+        logo_path = await app.download_media(LOGO_ID, file_name="logo.png", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
         
     await app.edit_message_text(CHAT_ID, msg_id, f"🔥 Starting FFmpeg Engine...\n📦 File: `{RENAME}`\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
     await app.stop() 
     return video_path, sub_path, logo_path, msg_id
+
+async def print_ffmpeg_errors(stderr):
+    while True:
+        line = await stderr.readline()
+        if not line: break
+        print("FFMPEG LOG:", line.decode('utf-8').strip(), flush=True)
 
 async def encode_phase(video_path, sub_path, logo_path, msg_id):
     output = RENAME
@@ -121,8 +129,8 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
         if logo_path:
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
             # FIXED POSITION (Top Right) AND SIZE (Small, width 120px)
-            scale_val = "150:-1"
-            pos_val = "main_w-overlay_w-10:10"
+            scale_val = "120:-1"
+            pos_val = "main_w-overlay_w-15:15"
             
             filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
             
@@ -154,7 +162,10 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    # Catching FFmpeg errors so GitHub Doesn't Crash Silently
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    asyncio.create_task(print_ffmpeg_errors(proc.stderr))
+    
     start_time = time.time()
     last_up = 0
 
@@ -232,12 +243,16 @@ async def upload_phase(output, returncode, msg_id):
         except Exception as e:
             await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video. (Return Code: {returncode})")
     
     await app.stop()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    vid, sub, logo, mid = loop.run_until_complete(download_phase())
-    out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
-    loop.run_until_complete(upload_phase(out, rcode, mid))
+    try:
+        loop = asyncio.get_event_loop()
+        vid, sub, logo, mid = loop.run_until_complete(download_phase())
+        out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
+        loop.run_until_complete(upload_phase(out, rcode, mid))
+    except Exception as err:
+        print("CRITICAL WORKER ERROR:", str(err), flush=True)
+        sys.exit(1)
