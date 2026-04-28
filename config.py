@@ -18,7 +18,14 @@ API_HASH = os.getenv("API_HASH")
 # Global Objects
 SESSION_ID = str(uuid.uuid4())[:8]
 active_processes = {}
-global_task_lock = asyncio.Lock()
+
+# --- QUEUE SYSTEM LOCKS ---
+global_task_lock = asyncio.Lock()   # Local Muxing ke liye
+github_task_lock = asyncio.Lock()   # Cloud Hardsub/Compress ke liye
+
+# --- QUEUE COUNTERS ---
+current_github_tasks = 0            # Cloud Queue tracking
+
 EXTRACT_DATA = {} 
 
 LANG_MAP = {
