@@ -2,10 +2,20 @@ import sqlite3
 import os
 from config import OWNER_ID
 
-DATA_DIR = "/data" if os.path.exists("/data") else os.environ.get("DATA_DIR", ".")
+# Bucket mount path hamesha /data rahega
+DATA_DIR = "/data"
+
+# Agar bucket mount nahi hai toh fallback to current dir (sirf testing ke liye)
+if not os.path.exists(DATA_DIR):
+    DATA_DIR = "."
+
 DB_PATH = os.path.abspath(os.path.join(DATA_DIR, "bot_management.db"))
 
 def init_db():
+    # Folder create karein agar bucket mount nahi hui toh
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute('CREATE TABLE IF NOT EXISTS processed (id TEXT PRIMARY KEY)')
