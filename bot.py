@@ -6,15 +6,18 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 )
 
-from config import BOT_TOKEN, OWNER_ID, PORT, SESSION_ID, global_task_lock, github_task_lock, active_processes, EXTRACT_DATA, LANG_MAP, GITHUB_TOKEN, REPO_NAME
-from database import init_db, is_user_auth, is_chat_auth, add_processed_id, DB_PATH, get_user_settings, update_user_setting
-from bot_utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail
+from config import BOT_TOKEN, OWNER_ID, AUTH_USERS, AUTH_CHATS, PORT, SESSION_ID, global_task_lock, github_task_lock, active_processes, EXTRACT_DATA, LANG_MAP, GITHUB_TOKEN, REPO_NAME
+from database import init_db, is_user_auth, is_chat_auth, add_processed_id, DB_PATH, get_user_settings, update_user_setting, add_auth_user, del_auth_user, add_auth_chat, del_auth_chat, get_user_dump, set_user_dump, DATA_DIR
+from bot_utils import mux_video, clean_temp_files, get_readable_time, extract_thumbnail, get_media_info, generate_screenshots
 
 # --- GLOBAL VARIABLES & DB ---
 current_active_tasks = 0
 current_github_tasks = 0
 all_tasks = set()
 ACTIVE_STATUS_MSGS = {}
+
+# Thumbnails ko persistent storage me save karne ke liye
+THUMB_DIR = os.path.join(DATA_DIR, "user_thumbs")
 
 async def delete_after(msg, delay):
     await asyncio.sleep(delay)
@@ -61,7 +64,7 @@ def _is_github_busy():
         r = requests.get(url, headers=headers)
         if r.status_code == 200:
             for run in r.json().get("workflow_runs",[]):
-                if run.get("status") in ["in_progress", "queued", "requested"]: return True
+                if run.get("status") in["in_progress", "queued", "requested"]: return True
         return False
     except: return False
 
@@ -78,8 +81,11 @@ def _cancel_all_github_runs():
         return False
     except: return False
 
-async def wait_for_github_free():
+async def wait_for_github_free(timeout=3600):
+    start_time = time.time()
     while await asyncio.to_thread(_is_github_busy):
+        if time.time() - start_time > timeout:
+            break
         await asyncio.sleep(20)
 
 # --- AUTO RENAME LOGIC ---
@@ -87,20 +93,22 @@ def auto_rename(orig_name, user_id):
     try:
         settings = get_user_settings(user_id)
         fmt = settings.get('rename_format')
-        if not fmt: fmt = "[E{ep}] {short_title}[{quality}] @lpxempire"
         
+        if not fmt: 
+            return orig_name
+            
         base_name, ext = os.path.splitext(orig_name)
         if not ext: ext = '.mkv'
         ep_match = re.search(r'-\s*(\d+)', base_name)
         ep = ep_match.group(1) if ep_match else "01"
         q_match = re.search(r'(1080p|720p|480p|2160p|4k)', base_name, re.IGNORECASE)
         quality = q_match.group(1).lower() if q_match else "1080p"
+        
         title_part = base_name.split('-')[0] if '-' in base_name else base_name
         title_part = re.sub(r'\[.*?\]', '', title_part).strip()
-        words = title_part.split()
-        short_title = " ".join(words[:4]) if len(words) > 0 else "Video"
+        full_title = title_part if title_part else "Video"
         
-        final_name = fmt.replace("{ep}", ep).replace("{short_title}", short_title).replace("{quality}", quality)
+        final_name = fmt.replace("{ep}", ep).replace("{short_title}", full_title).replace("{quality}", quality)
         return final_name + ext
     except: return orig_name
 
@@ -109,71 +117,169 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🛠 **Bot Commands & Features** 🛠\n\n"
         "🔹 /start - Check bot status\n"
-        "🔹 /autorename - Set Rename Format (e.g., `/autorename [E{ep}] {short_title}`)\n"
+        "🔹 /autorename - Set Rename Format\n"
         "🔹 /setlogo - **Reply** to an image to set Hardsub Logo\n"
         "🔹 /showlogo - Check currently set logo\n"
         "🔹 /setdump - Set a Dump Group ID\n"
         "🔹 /deldump - Disable Dump Group\n"
-        "🔹 /dthumb - Delete Custom Cover Picture\n"
+        "🔹 /showlogo - Check/Remove currently set logo\n"
+        "🔹 /showcover - Check/Remove custom cover picture\n"
+        "🔹 /showrename - Check/Remove auto-rename format\n"
         "🔹 /extract - Reply to MKV to extract subs\n"
-        "🔹 /compress - Reply to video to Compress (CRF 34 via Cloud)\n"
-        "🔹 /clear - 🗑 Cancel active tasks & Clean Memory"
+        "🔹 /compress - Reply to video to Compress (e.g., `/compress 720p`)\n"
+        "🔹 /mediainfo - Reply to video to get Codec/Bitrate details\n"
+        "🔹 /screens - Reply to video to generate screenshots (e.g., `/screens 4`)\n"
+        "🔹 /queue - Check active tasks queue\n"
+        "🔹 /clear - 🗑 Cancel your active tasks & Clean Memory\n\n"
+        "👑 **Admin Commands:**\n"
+        "🔹 `/auth [id]` - Give access to user/group\n"
+        "🔹 `/unauth [id]` - Remove access"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
-async def cmd_dthumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    if not context.args: return await update.message.reply_text("⚠️ Usage: `/auth [user_id ya chat_id]`")
+    try:
+        target_id = int(context.args[0])
+        if str(target_id).startswith("-100") or str(target_id).startswith("-"):
+            add_auth_chat(target_id)
+            await update.message.reply_text(f"✅ Group/Channel `{target_id}` authorized successfully!")
+        else:
+            add_auth_user(target_id)
+            await update.message.reply_text(f"✅ User `{target_id}` authorized successfully!")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid ID format.")
+
+async def cmd_unauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    if not context.args: return await update.message.reply_text("⚠️ Usage: `/unauth [user_id ya chat_id]`")
+    try:
+        target_id = int(context.args[0])
+        if str(target_id).startswith("-100") or str(target_id).startswith("-"):
+            del_auth_chat(target_id)
+            await update.message.reply_text(f"🚫 Group/Channel `{target_id}` unauthorized.")
+        else:
+            del_auth_user(target_id)
+            await update.message.reply_text(f"🚫 User `{target_id}` unauthorized.")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid ID format.")
+
+async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_active_tasks, current_github_tasks
+    text = (
+        "📊 **Current Bot Queue**\n\n"
+        f"⚡ **Local Tasks (Muxing):** `{current_active_tasks}`\n"
+        f"☁️ **Cloud Tasks (Encode/Compress):** `{current_github_tasks}`"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def cmd_mediainfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
+        return await msg.reply_text("⚠️ Reply to a video file with `/mediainfo` to check its details.")
+    
+    target = msg.reply_to_message.video or msg.reply_to_message.document
+    bot_msg = await msg.reply_text("⏳ Fetching Media Info...")
+    
+    mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
+    info = await get_media_info(mkv_f.file_path)
+    
+    try: os.remove(mkv_f.file_path)
+    except: pass
+    
+    await bot_msg.edit_text(f"📊 **Media Info:**\n\n{info}", parse_mode="Markdown")
+
+async def cmd_screens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
+        return await msg.reply_text("⚠️ Reply to a video file with `/screens[number]` (Max 10).")
+    
+    try:
+        num = int(context.args[0]) if context.args else 4
+        num = min(max(num, 1), 10)
+    except:
+        num = 4
+        
+    target = msg.reply_to_message.video or msg.reply_to_message.document
+    bot_msg = await msg.reply_text(f"📸 Generating {num} screenshots...")
+    
+    mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
+    folder = f"screens_{update.effective_user.id}_{int(time.time())}"
+    
+    images = await generate_screenshots(mkv_f.file_path, num, folder)
+    
+    if images:
+        media_group =[InputMediaPhoto(open(img, 'rb')) for img in images]
+        await msg.reply_media_group(media=media_group)
+        await bot_msg.delete()
+    else:
+        await bot_msg.edit_text("❌ Failed to generate screenshots.")
+        
+    try: os.remove(mkv_f.file_path)
+    except: pass
+    clean_temp_files(folder)
+
+async def cmd_showlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    thumb_path = f"user_thumbs/{user_id}.jpg"
+    settings = get_user_settings(user_id)
+    if not settings.get('logo_id'):
+        return await update.message.reply_text("⚠️ No logo set! Reply to a PNG with /setlogo")
+
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Logo", callback_data="remove_logo")]])
+    
+    try: await update.message.reply_photo(photo=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
+    except:
+        try: await update.message.reply_document(document=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
+        except: await update.message.reply_text("⚠️ Failed to load logo.")
+
+async def cmd_showcover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
+    
     if os.path.exists(thumb_path):
-        os.remove(thumb_path)
-        await update.message.reply_text("🗑️ Custom cover deleted.")
-    else: await update.message.reply_text("⚠️ No custom cover found.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Cover", callback_data="remove_cover")]])
+        await update.message.reply_photo(photo=open(thumb_path, 'rb'), caption="🖼 **Your Custom Cover**", reply_markup=kb)
+    else:
+        await update.message.reply_text("⚠️ No custom cover found. Send a photo to set one.")
+
+async def cmd_showrename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    settings = get_user_settings(user_id)
+    fmt = settings.get('rename_format')
+    
+    if fmt:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Format", callback_data="remove_rename")]])
+        await update.message.reply_text(f"📝 **Current Rename Format:**\n\n`{fmt}`", parse_mode="Markdown", reply_markup=kb)
+    else:
+        await update.message.reply_text("⚠️ No custom rename format set. Use `/autorename` to set one.")
 
 async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: return await update.message.reply_text("Usage: `/setdump -100xxx`")
-    from database import set_user_dump
     set_user_dump(update.effective_user.id, context.args[0])
     await update.message.reply_text("✅ Personal dump group set!")
 
 async def cmd_deldump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from database import set_user_dump
     set_user_dump(update.effective_user.id, None)
     await update.message.reply_text("🗑️ Personal dump removed.")
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await perform_clear(context)
-    await update.message.reply_text("🗑️ Task queues, active tasks & extra memory cleared.\n*(Logo, Rename format & Cover are safe!)*")
-
-# --- CORE LOGIC ---
-async def perform_clear(context):
-    global current_active_tasks, current_github_tasks, all_tasks, active_processes, ACTIVE_STATUS_MSGS
-    await asyncio.to_thread(_cancel_all_github_runs)
-    for key, proc in list(active_processes.items()):
-        try: proc.terminate()
-        except: pass
-    active_processes.clear()
-    for chat_id, msg_id in list(ACTIVE_STATUS_MSGS.items()):
-        try: await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except: pass
-    ACTIVE_STATUS_MSGS.clear()
-    context.user_data.clear()
+    user_id = update.effective_user.id
     
-    try:
-        for uid, data in list(EXTRACT_DATA.items()):
-            if data and 'path' in data and os.path.exists(data['path']):
-                try: os.remove(data['path'])
-                except: pass
-        EXTRACT_DATA.clear()
-        
-        # NOTE: Only deleting task thumbnails. Base thumbnail `user_id.jpg` is SAFE!
-        if os.path.exists("user_thumbs"):
-            for f in os.listdir("user_thumbs"):
-                if "_task_" in f: os.remove(os.path.join("user_thumbs", f))
-        for folder in glob.glob("task_*"):
-            if os.path.isdir(folder): shutil.rmtree(folder)
-    except: pass
-    current_active_tasks, current_github_tasks = 0, 0
-    all_tasks.clear()
+    for key, proc in list(active_processes.items()):
+        if str(user_id) in key:
+            try: proc.terminate()
+            except: pass
+            del active_processes[key]
+            
+    if user_id in EXTRACT_DATA:
+        data = EXTRACT_DATA.pop(user_id)
+        if data and 'path' in data and os.path.exists(data['path']):
+            try: os.remove(data['path'])
+            except: pass
+            
+    context.user_data.clear()
+    await update.message.reply_text("🗑️ Your active tasks and memory have been cleared!\n*(Other users' tasks are safe)*")
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -187,7 +293,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        msg = await update.message.reply_text("⚠️ Usage: `/autorename[S01 E{ep}] {short_title} [{quality} ⌯ Sub]`")
+        msg = await update.message.reply_text("⚠️ Usage: `/autorename [S01 E{ep}] {short_title} [{quality} ⌯ Sub]`")
         asyncio.create_task(delete_after(update.message, 0))
         asyncio.create_task(delete_after(msg, 5))
         return
@@ -214,37 +320,89 @@ async def cmd_showlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     settings = get_user_settings(user_id)
     if not settings.get('logo_id'):
-        msg = await update.message.reply_text("⚠️ No logo set! Reply to a PNG with /setlogo")
-        asyncio.create_task(delete_after(update.message, 0))
-        asyncio.create_task(delete_after(msg, 5))
-        return
+        return await update.message.reply_text("⚠️ No logo set! Reply to a PNG with /setlogo")
 
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Close", callback_data="logo_close")]])
+    # Yahan "logo_close" ki jagah "remove_logo" hona chahiye
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Logo", callback_data="remove_logo")]])
     
-    try: await update.message.reply_photo(photo=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
+    try: 
+        await update.message.reply_photo(photo=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
     except:
-        try: await update.message.reply_document(document=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
-        except: await update.message.reply_text("⚠️ Failed to load logo.")
-        
-    try: await update.message.delete()
-    except: pass
+        try: 
+            await update.message.reply_document(document=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
+        except: 
+            await update.message.reply_text("⚠️ Failed to load logo.")
 
-async def logo_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def settings_remove_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+    
+    # Alert popup dikhane ke liye
     await query.answer()
-    if query.data == "logo_close":
-        try: await query.message.delete()
-        except: pass
+
+    if data == "remove_logo":
+        update_user_setting(user_id, "logo_id", None)
+        try:
+            # Ye chat se us photo/document message ko poora delete kar dega
+            await query.message.delete()
+        except:
+            pass
+        # Confirmation ke liye ek naya message bhej sakte hain jo thodi der baad delete ho jaye
+        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Logo removed successfully!")
+        asyncio.create_task(delete_after(msg, 5)) # 5 second baad confirmation delete ho jayega
+    
+    elif data == "remove_cover":
+        thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+        try:
+            await query.message.delete()
+        except:
+            pass
+        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Custom cover removed successfully!")
+        asyncio.create_task(delete_after(msg, 5))
+    
+    elif data == "remove_rename":
+        update_user_setting(user_id, "rename_format", None)
+        try:
+            await query.message.delete()
+        except:
+            pass
+        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Auto-rename format removed.")
+        asyncio.create_task(delete_after(msg, 5))
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     photo = update.message.photo[-1]
-    os.makedirs("user_thumbs", exist_ok=True)
-    thumb_path = f"user_thumbs/{user_id}.jpg"
+    
+    # Bucket storage mein directory ensure karein
+    os.makedirs(THUMB_DIR, exist_ok=True)
+    thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
+    
+    # Photo download aur save logic
     photo_file = await context.bot.get_file(photo.file_id)
-    try: shutil.copy(photo_file.file_path, thumb_path)
-    except: await photo_file.download_to_drive(thumb_path)
-    await update.message.reply_text("🖼️ Custom Cover Saved!")
+    try: 
+        shutil.copy(photo_file.file_path, thumb_path)
+    except: 
+        await photo_file.download_to_drive(thumb_path)
+    
+    # 1. User ki bheji hui photo (original image) chat se delete karein
+    try:
+        await update.message.delete()
+    except Exception:
+        # Agar group mein permission nahi hai toh error na aaye
+        pass
+
+    # 2. Confirmation message bhejein
+    conf_msg = await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🖼️ **Custom Cover Saved!**\n*(Original image deleted to keep chat clean)*",
+        parse_mode="Markdown"
+    )
+    
+    # 3. Confirmation message ko 5 second baad delete karein
+    asyncio.create_task(delete_after(conf_msg, 5))
 
 async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -266,12 +424,18 @@ async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_compress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to an MKV/MP4 file with `/compress` to begin.")
+        return await msg.reply_text("⚠️ Reply to an MKV/MP4 file with `/compress[resolution]` (e.g., `/compress 720p`).")
+    
+    res_arg = context.args[0].lower() if context.args else "original"
+    valid_res = {"1080p": "1080", "720p": "720", "480p": "480", "360p": "360"}
+    resolution = valid_res.get(res_arg, "original")
+    
     target = msg.reply_to_message.video or msg.reply_to_message.document
     file_name = getattr(target, 'file_name', None) or "video.mkv"
     context.user_data['mkv_id'] = target.file_id
     context.user_data['orig_name'] = file_name
     context.user_data['sub_id'] = None 
+    context.user_data['resolution'] = resolution
     context.user_data['to_delete'] =[msg.message_id, msg.reply_to_message.message_id]
     user_id = update.effective_user.id
     final_name = auto_rename(file_name, user_id)
@@ -360,8 +524,14 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_access(update, context):
     if not update.effective_chat or not update.effective_user: return
-    if update.effective_user.id == OWNER_ID: return
-    if not is_chat_auth(update.effective_chat.id) and not is_user_auth(update.effective_user.id): raise ApplicationHandlerStop()
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if user_id == OWNER_ID or user_id in AUTH_USERS or chat_id in AUTH_CHATS: 
+        return
+        
+    if not is_chat_auth(chat_id) and not is_user_auth(user_id): 
+        raise ApplicationHandlerStop()
 
 async def block_duplicates(update, context):
     if not update.effective_message: return
@@ -403,15 +573,30 @@ async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if 'mkv_id' not in context.user_data: return await query.message.edit_text("❌ Session expired.")
+    
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    dump_id = get_user_dump(user_id)
+    
+    if chat_id != user_id and not dump_id:
+        try:
+            await context.bot.send_chat_action(chat_id=user_id, action='typing')
+        except Exception:
+            return await query.message.reply_text(f"⚠️ **Action Required!**\n\nSince you are using me in a group, I will send the final video to your PM.\n\n👉 **Please start me in PM first:** @{context.bot.username}", parse_mode="Markdown")
+
     mode = query.data.replace("mode_", "")
     final_name = context.user_data.get('final_name', 'video.mkv')
+    
+    if mode == "hardsub":
+        base_name, _ = os.path.splitext(final_name)
+        final_name = f"{base_name}.mp4"
+        
     await query.message.delete()
     await process_dispatch(update, context, final_name, mode=mode)
 
 async def process_dispatch(update, context, final_name, mode):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    from database import get_user_dump
     dump_id = get_user_dump(user_id)
     target_thread = "none"
     folder_letter = "#" 
@@ -433,9 +618,12 @@ async def process_dispatch(update, context, final_name, mode):
             except: pass
         target_thread = str(thread) if thread else "none"
 
-    if mode in["hardsub", "compress"]:
+    effective_dump = dump_id if dump_id else user_id
+
+    if mode in ["hardsub", "compress"]:
         global current_github_tasks, all_tasks
         actual_sub_id = context.user_data.get('sub_id') or "none"
+        resolution = context.user_data.get('resolution', 'original')
         settings = get_user_settings(user_id)
         
         if current_github_tasks > 0: status = await context.bot.send_message(chat_id, f"  TASK QUEUED (Cloud Node)\n  Position: #{current_github_tasks}")
@@ -444,12 +632,16 @@ async def process_dispatch(update, context, final_name, mode):
         ACTIVE_STATUS_MSGS[chat_id] = status.message_id
         
         logo_id = settings['logo_id'] or "none"
-        # Only sending dump_id, logo_id and msg_id (Size/Pos not needed anymore)
-        dump_id_str = f"{dump_id if dump_id else 'none'}:::{logo_id}:::{status.message_id}"
+        dump_id_str = f"{effective_dump}:::{logo_id}:::{status.message_id}:::{resolution}"
 
         task_data = {
-            "task_type": mode, "video_id": context.user_data['mkv_id'], "sub_id": actual_sub_id,
-            "rename": final_name, "chat_id": str(chat_id), "dump_id": dump_id_str, "thread_id": target_thread,
+            "task_type": mode, 
+            "video_id": context.user_data['mkv_id'], 
+            "sub_id": actual_sub_id,
+            "rename": final_name, 
+            "chat_id": str(chat_id), 
+            "dump_id": dump_id_str, 
+            "thread_id": target_thread,
             "to_delete": context.user_data.get('to_delete',[])
         }
         
@@ -459,7 +651,7 @@ async def process_dispatch(update, context, final_name, mode):
         all_tasks.add(gh_task)
         gh_task.add_done_callback(lambda t: all_tasks.discard(t))
     else:
-        await start_local_task(update, context, final_name, dump_id, target_thread, folder_letter)
+        await start_local_task(update, context, final_name, effective_dump, target_thread, folder_letter)
 
 async def run_github_queue(context, data, status):
     global current_github_tasks, ACTIVE_STATUS_MSGS
@@ -491,10 +683,10 @@ async def start_local_task(update, context, final_name, dump_id, target_thread, 
     global current_active_tasks, all_tasks, ACTIVE_STATUS_MSGS
     user_id = update.effective_user.id
     msg_list = context.user_data.get('to_delete',[])
-    os.makedirs("user_thumbs", exist_ok=True)
+    os.makedirs(THUMB_DIR, exist_ok=True)
     task_id = int(time.time() * 1000)
-    main_thumb = f"user_thumbs/{user_id}.jpg"
-    task_thumb = f"user_thumbs/{user_id}_task_{task_id}.jpg"
+    main_thumb = f"{THUMB_DIR}/{user_id}.jpg"
+    task_thumb = f"{THUMB_DIR}/{user_id}_task_{task_id}.jpg"
     
     if os.path.exists(main_thumb): shutil.copy(main_thumb, task_thumb)
     else: task_thumb = None
@@ -551,7 +743,7 @@ async def run_queue(context, data, status):
                     if not has_thumb: has_thumb = await extract_thumbnail(out, thumb_path)
                     await status.edit_text("📤 Uploading file to Telegram...")
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
-                    target_chat = data['dump_id'] if data['dump_id'] else data['chat_id']
+                    target_chat = data['dump_id'] if data['dump_id'] else data['user_id']
                     thread = int(data['target_thread']) if data['target_thread'] != "none" else None
                     
                     try:
@@ -561,7 +753,7 @@ async def run_queue(context, data, status):
                             read_timeout=7200, write_timeout=7200
                         )
                         if str(target_chat) != str(data['chat_id']):
-                            await context.bot.send_message(chat_id=data['chat_id'], text=f"✅ Muxing Complete!\n\nFile dumped to `{data['folder_letter']}` folder.")
+                            await context.bot.send_message(chat_id=data['chat_id'], text=f"✅ Muxing Complete!\n\nFile sent to your PM / Dump Group.")
                     finally:
                         if thumb_file: thumb_file.close()
                     
@@ -610,12 +802,19 @@ def main():
     
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("auth", cmd_auth))
+    app.add_handler(CommandHandler("unauth", cmd_unauth))
     app.add_handler(CommandHandler("autorename", cmd_autorename))
     app.add_handler(CommandHandler("setlogo", cmd_setlogo))
     app.add_handler(CommandHandler("showlogo", cmd_showlogo))
     app.add_handler(CommandHandler("extract", cmd_extract))
     app.add_handler(CommandHandler("compress", cmd_compress))
-    app.add_handler(CommandHandler("dthumb", cmd_dthumb))
+    app.add_handler(CommandHandler("mediainfo", cmd_mediainfo))
+    app.add_handler(CommandHandler("screens", cmd_screens))
+    app.add_handler(CommandHandler("queue", cmd_queue))
+    app.add_handler(CommandHandler("showcover", cmd_showcover))
+    app.add_handler(CommandHandler("showrename", cmd_showrename))
+    app.add_handler(CommandHandler("showlogo", cmd_showlogo))
     app.add_handler(CommandHandler("setdump", cmd_setdump))
     app.add_handler(CommandHandler("deldump", cmd_deldump))
     app.add_handler(CommandHandler("clear", cmd_clear))
@@ -625,7 +824,7 @@ def main():
     
     app.add_handler(CallbackQueryHandler(mode_selection_cb, pattern=r"^mode_"))
     app.add_handler(CallbackQueryHandler(do_extract_cb, pattern=r"^ext_"))
-    app.add_handler(CallbackQueryHandler(logo_cb, pattern=r"^logo_"))
+    app.add_handler(CallbackQueryHandler(settings_remove_cb, pattern=r"^remove_"))
     app.add_handler(CallbackQueryHandler(cancel_cb, pattern=r"^cancel_"))
     
     print("🤖 System Online & Protected. Bot polling started.")
