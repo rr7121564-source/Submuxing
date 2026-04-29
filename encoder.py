@@ -239,7 +239,7 @@ async def upload_phase(output, returncode, msg_id):
                 progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully dumped to Group!")
+                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully sent to your PM / Dump Group!")
             await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
             await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
