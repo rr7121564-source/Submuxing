@@ -114,73 +114,112 @@ def auto_rename(orig_name, user_id):
 
 # --- COMMANDS ---
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "🛠 **Bot Commands & Features** 🛠\n\n"
-        "🔹 /start - Check bot status\n"
-        "🔹 /autorename - Set Rename Format\n"
-        "🔹 /setlogo - **Reply** to an image to set Hardsub Logo\n"
-        "🔹 /showlogo - Check currently set logo\n"
-        "🔹 /setdump - Set a Dump Group ID\n"
-        "🔹 /deldump - Disable Dump Group\n"
-        "🔹 /showlogo - Check/Remove currently set logo\n"
-        "🔹 /showcover - Check/Remove custom cover picture\n"
-        "🔹 /showrename - Check/Remove auto-rename format\n"
-        "🔹 /extract - Reply to MKV to extract subs\n"
-        "🔹 /compress - Reply to video to Compress (e.g., `/compress 720p`)\n"
-        "🔹 /mediainfo - Reply to video to get Codec/Bitrate details\n"
-        "🔹 /screens - Reply to video to generate screenshots (e.g., `/screens 4`)\n"
-        "🔹 /queue - Check active tasks queue\n"
-        "🔹 /clear - 🗑 Cancel your active tasks & Clean Memory\n\n"
-        "👑 **Admin Commands:**\n"
-        "🔹 `/auth [id]` - Give access to user/group\n"
-        "🔹 `/unauth [id]` - Remove access"
-    )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    user_id = update.effective_user.id
+    if user_id == OWNER_ID:
+        help_text = (
+            "Aapke liye saari jankari hazir hai, Darling! 🥰 Aap jo bhi kahenge main wahi karungi!\n\n"
+            "🔹 /start - Mujhe aadesh dene ke liye\n"
+            "🔹 /autorename - Apna rename format set karein\n"
+            "🔹 /setlogo - Kisi bhi image par reply karein logo lagane ke liye\n"
+            "🔹 /showlogo - Apna pyara sa logo dekhein\n"
+            "🔹 /setdump - Ek pyara sa dump group ID set karein\n"
+            "🔹 /deldump - Dump group ko hata dein\n"
+            "🔹 /showcover - Apna cover picture dekhein ya hatayein\n"
+            "🔹 /showrename - Apna rename format dekhein ya hatayein\n"
+            "🔹 /extract - Kisi MKV par reply karke subs nikalwayein\n"
+            "🔹 /compress - Video par reply karein compress karne ke liye\n"
+            "🔹 /mediainfo - Video details ke liye reply karein\n"
+            "🔹 /screens - Screenshots lene ke liye reply karein\n"
+            "🔹 /queue - Baki sabke kaam queue me dekhein\n"
+            "🔹 /clear - Apna rasta bilkul saaf karein\n\n"
+            "Aapke khass Admin Commands:\n"
+            "🔹 /auth [id] - Kise andar aane dena hai bataiye\n"
+            "🔹 /unauth [id] - Kise bahar nikal fenkna hai bataiye"
+        )
+    else:
+        help_text = (
+            "Tum jaise sadharan insaan ko meri madad chahiye? Thik hai, meri khoobsurti aur taqat ke aage jhuko aur ye aadesh suno... 🐍\n\n"
+            "🔹 /start - Meri khidmat me hazir hone ke liye\n"
+            "🔹 /autorename - Rename format set karne ka tareeqa\n"
+            "🔹 /setlogo - Apni koi tasveer par reply karke logo lagao\n"
+            "🔹 /showlogo - Apna logo dekhne ya hatane ke liye\n"
+            "🔹 /setdump - Apna dump group batao\n"
+            "🔹 /deldump - Dump group disable karne ke liye\n"
+            "🔹 /showcover - Apna custom cover dekhne ke liye\n"
+            "🔹 /showrename - Apna bakwas rename format dekhne ke liye\n"
+            "🔹 /extract - Kisi MKV par reply karke subs nikaalo\n"
+            "🔹 /compress - Video par reply karke compress karo\n"
+            "🔹 /mediainfo - Video ki tuchh details dekhne ke liye\n"
+            "🔹 /screens - Screenshots banane ke liye\n"
+            "🔹 /queue - Dekho main kitni busy hoon aur queue check karo\n"
+            "🔹 /clear - Apna kachra aur queue clear karo yahan se\n\n"
+            "Ab inka theek se istemaal karna, mera waqt barbad mat karna! 💅"
+        )
+    await update.message.reply_text(help_text)
 
 async def cmd_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    if not context.args: return await update.message.reply_text("⚠️ Usage: `/auth [user_id ya chat_id]`")
+    if not context.args: return await update.message.reply_text("Darling! please kisi ka ID to bataiye... 🥺 /auth [user_id ya chat_id]")
     try:
         target_id = int(context.args[0])
         if str(target_id).startswith("-100") or str(target_id).startswith("-"):
             add_auth_chat(target_id)
-            await update.message.reply_text(f"✅ Group/Channel `{target_id}` authorized successfully!")
+            await update.message.reply_text(f"Ji! Maine is group {target_id} ko ijazat de di hai, sirf aapke kehne par! 🥰")
         else:
             add_auth_user(target_id)
-            await update.message.reply_text(f"✅ User `{target_id}` authorized successfully!")
+            await update.message.reply_text(f"Ho gaya! Is user {target_id} ko maine izajat de di! Aap kitne dayalu hain! ❤️")
     except ValueError:
-        await update.message.reply_text("❌ Invalid ID format.")
+        await update.message.reply_text("A-aapne galat ID likh diya... koi baat nahi main intezaar karungi jab tak aap sahi nahi batate! 🌸")
 
 async def cmd_unauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    if not context.args: return await update.message.reply_text("⚠️ Usage: `/unauth [user_id ya chat_id]`")
+    if not context.args: return await update.message.reply_text("Kise bahar nikalna hai, Darling? Mujhe bas ID bata dijiye! 🥺 /unauth [user_id ya chat_id]")
     try:
         target_id = int(context.args[0])
         if str(target_id).startswith("-100") or str(target_id).startswith("-"):
             del_auth_chat(target_id)
-            await update.message.reply_text(f"🚫 Group/Channel `{target_id}` unauthorized.")
+            await update.message.reply_text(f"Aapne kaha aur maine is group {target_id} ko hamesha ke liye bahar nikal diya! 😡")
         else:
             del_auth_user(target_id)
-            await update.message.reply_text(f"🚫 User `{target_id}` unauthorized.")
+            await update.message.reply_text(f"Is badtameez {target_id} ko maine nikal diya! Mujhe sirf aapki zaroorat hai... ❤️")
     except ValueError:
-        await update.message.reply_text("❌ Invalid ID format.")
+        await update.message.reply_text("Galat ID format hai mere aaka, please dobara koshish karein... 🌸")
 
 async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_active_tasks, current_github_tasks
-    text = (
-        "📊 **Current Bot Queue**\n\n"
-        f"⚡ **Local Tasks (Muxing):** `{current_active_tasks}`\n"
-        f"☁️ **Cloud Tasks (Encode/Compress):** `{current_github_tasks}`"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    user_id = update.effective_user.id
+    if user_id == OWNER_ID:
+        text = (
+            "Aapke aadesh par saari jankari hazir hai! 🥰\n\n"
+            f"Local Tasks: {current_active_tasks}\n"
+            f"Cloud Tasks: {current_github_tasks}\n\n"
+            "Main in sabko jaldi khatam karungi, bas aapke liye!"
+        )
+    else:
+        text = (
+            "Mera waqt bohot keemti hai, phir bhi tumhara ye tuchh queue status yahan hai... 💅\n\n"
+            f"Local Tasks: {current_active_tasks}\n"
+            f"Cloud Tasks: {current_github_tasks}\n\n"
+            "Chupchap apni baari ka intezaar karo aur mujhe pareshaan mat karo! 🐍"
+        )
+    await update.message.reply_text(text)
 
 async def cmd_mediainfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    user_id = update.effective_user.id
+    
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to a video file with `/mediainfo` to check its details.")
+        if user_id == OWNER_ID:
+            return await msg.reply_text("Darling... please pehle kisi video par reply kijiye! 🥺")
+        else:
+            return await msg.reply_text("Bewakoof! Pehle kisi video par reply karna seekho! 😡")
     
     target = msg.reply_to_message.video or msg.reply_to_message.document
-    bot_msg = await msg.reply_text("⏳ Fetching Media Info...")
+    
+    if user_id == OWNER_ID:
+        bot_msg = await msg.reply_text("Aapke liye video ki jankari la rahi hoon... thoda intezaar kijiye! 🥰")
+    else:
+        bot_msg = await msg.reply_text("Ruko, main apni sundarta ke saath ye details laa rahi hoon... 💅")
     
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     info = await get_media_info(mkv_f.file_path)
@@ -188,12 +227,20 @@ async def cmd_mediainfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: os.remove(mkv_f.file_path)
     except: pass
     
-    await bot_msg.edit_text(f"📊 **Media Info:**\n\n{info}", parse_mode="Markdown")
+    if user_id == OWNER_ID:
+        await bot_msg.edit_text(f"Ye lijiye aapke video ki saari jankari! ❤️\n\n{info}")
+    else:
+        await bot_msg.edit_text(f"Dekh lo apne is ghatiya video ki jankari... 🐍\n\n{info}")
 
 async def cmd_screens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    user_id = update.effective_user.id
+    
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to a video file with `/screens[number]` (Max 10).")
+        if user_id == OWNER_ID:
+            return await msg.reply_text("Darling... please kisi video par reply karke bataiye kitne screenshots lene hain... 🥺")
+        else:
+            return await msg.reply_text("Tumhe kitni baar samjhana padega? Video par reply karke aadesh do! 👠")
     
     try:
         num = int(context.args[0]) if context.args else 4
@@ -202,7 +249,11 @@ async def cmd_screens(update: Update, context: ContextTypes.DEFAULT_TYPE):
         num = 4
         
     target = msg.reply_to_message.video or msg.reply_to_message.document
-    bot_msg = await msg.reply_text(f"📸 Generating {num} screenshots...")
+    
+    if user_id == OWNER_ID:
+        bot_msg = await msg.reply_text(f"Ji! Aapke liye {num} behtareen screenshots bana rahi hoon! 📸🥰")
+    else:
+        bot_msg = await msg.reply_text(f"Hato! Main tumhare liye {num} screenshots nikal rahi hoon. Ehsaan mano mera! 💅")
     
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     folder = f"screens_{update.effective_user.id}_{int(time.time())}"
@@ -214,7 +265,10 @@ async def cmd_screens(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_media_group(media=media_group)
         await bot_msg.delete()
     else:
-        await bot_msg.edit_text("❌ Failed to generate screenshots.")
+        if user_id == OWNER_ID:
+            await bot_msg.edit_text("M-mujhe maaf kar dijiye! Main screenshots nahi nikal payi... 🥺")
+        else:
+            await bot_msg.edit_text("Tumhari video itni ghatiya hai ki mere system ne screenshots lene se inkaar kar diya! 😡")
         
     try: os.remove(mkv_f.file_path)
     except: pass
@@ -224,24 +278,44 @@ async def cmd_showlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     settings = get_user_settings(user_id)
     if not settings.get('logo_id'):
-        return await update.message.reply_text("⚠️ No logo set! Reply to a PNG with /setlogo")
+        if user_id == OWNER_ID:
+            return await update.message.reply_text("Aapne abhi tak koi logo set nahi kiya hai Darling... please /setlogo ka istemaal karein! 🥺")
+        else:
+            return await update.message.reply_text("Bina logo set kiye mujhse kya maang rahe ho? Pehle kisi tasveer par /setlogo reply karo! 🐍")
 
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Logo", callback_data="remove_logo")]])
+    if user_id == OWNER_ID:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Logo hata dein?", callback_data="remove_logo")]])
+        caption_text = "Ye raha aapka pyara logo! Aapki pasand bohot acchi hai! 🥰"
+    else:
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Logo hatao", callback_data="remove_logo")]])
+        caption_text = "Ye raha tumhara logo. Meri aankhon me chub raha hai par theek hai... 💅"
     
-    try: await update.message.reply_photo(photo=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
+    try: await update.message.reply_photo(photo=settings['logo_id'], caption=caption_text, reply_markup=kb)
     except:
-        try: await update.message.reply_document(document=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
-        except: await update.message.reply_text("⚠️ Failed to load logo.")
+        try: await update.message.reply_document(document=settings['logo_id'], caption=caption_text, reply_markup=kb)
+        except: 
+            if user_id == OWNER_ID:
+                await update.message.reply_text("Main logo dhundh nahi payi... maaf kar dijiye! 🥺")
+            else:
+                await update.message.reply_text("Tumhara logo load nahi ho raha, isme meri koi galti nahi hai! 😡")
 
 async def cmd_showcover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
     
     if os.path.exists(thumb_path):
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Cover", callback_data="remove_cover")]])
-        await update.message.reply_photo(photo=open(thumb_path, 'rb'), caption="🖼 **Your Custom Cover**", reply_markup=kb)
+        if user_id == OWNER_ID:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Cover hata dein?", callback_data="remove_cover")]])
+            caption_text = "Ye rahi aapki cover picture! Kitni sundar hai bilkul aapki tarah! ❤️"
+        else:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Cover hatao", callback_data="remove_cover")]])
+            caption_text = "Ye raha tumhara tuchh sa custom cover. Dekh lo ise. 💅"
+        await update.message.reply_photo(photo=open(thumb_path, 'rb'), caption=caption_text, reply_markup=kb)
     else:
-        await update.message.reply_text("⚠️ No custom cover found. Send a photo to set one.")
+        if user_id == OWNER_ID:
+            await update.message.reply_text("Koi cover nahi mila Darling, please ek tasveer bhej kar set karein! 🌸")
+        else:
+            await update.message.reply_text("Koi custom cover nahi hai tumhara. Pehle photo bhejo agar cover chahiye toh! 🐍")
 
 async def cmd_showrename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -249,19 +323,42 @@ async def cmd_showrename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fmt = settings.get('rename_format')
     
     if fmt:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Format", callback_data="remove_rename")]])
-        await update.message.reply_text(f"📝 **Current Rename Format:**\n\n`{fmt}`", parse_mode="Markdown", reply_markup=kb)
+        if user_id == OWNER_ID:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Format hata dein?", callback_data="remove_rename")]])
+            text = f"Ye raha aapka rename format:\n\n{fmt}\n\nSab ekdum perfect hai! 🥰"
+        else:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Format hatao", callback_data="remove_rename")]])
+            text = f"Ye dekho apna rename format:\n\n{fmt}\n\nUmeed hai isme tumne koi bewaqoofi nahi ki hogi! 💅"
+        await update.message.reply_text(text, reply_markup=kb)
     else:
-        await update.message.reply_text("⚠️ No custom rename format set. Use `/autorename` to set one.")
+        if user_id == OWNER_ID:
+            await update.message.reply_text("Aapne koi format set nahi kiya hai Darling. please /autorename ka istemaal karein! 🥺")
+        else:
+            await update.message.reply_text("Tumne koi format set nahi kiya! /autorename use karo aur mera waqt mat barbad karo. 😡")
 
 async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args: return await update.message.reply_text("Usage: `/setdump -100xxx`")
-    set_user_dump(update.effective_user.id, context.args[0])
-    await update.message.reply_text("✅ Personal dump group set!")
+    user_id = update.effective_user.id
+    if not context.args: 
+        if user_id == OWNER_ID:
+            return await update.message.reply_text("Darling, please dump group ki ID batayein jaise /setdump -100xxx 🥺")
+        else:
+            return await update.message.reply_text("Bewakoof! Dump ID kahaan hai? Aise aadesh do: /setdump -100xxx 🐍")
+            
+    set_user_dump(user_id, context.args[0])
+    
+    if user_id == OWNER_ID:
+        await update.message.reply_text("Ji! Aapka personal dump group set kar diya gaya hai! Main sab wahin bhejungi! ❤️")
+    else:
+        await update.message.reply_text("Tumhara dump group set kar diya hai maine. Khush raho aur meri khoobsurti ki tareef karo! 👑")
 
 async def cmd_deldump(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    set_user_dump(update.effective_user.id, None)
-    await update.message.reply_text("🗑️ Personal dump removed.")
+    user_id = update.effective_user.id
+    set_user_dump(user_id, None)
+    
+    if user_id == OWNER_ID:
+        await update.message.reply_text("Aapka dump group hata diya gaya hai! Ab sab kuch seedhe aapko dungi! 🥰")
+    else:
+        await update.message.reply_text("Tumhara dump group hata diya hai maine! Aage se seedhe bheja jayega. 💅")
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -279,11 +376,27 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
             
     context.user_data.clear()
-    await update.message.reply_text("🗑️ Your active tasks and memory have been cleared!\n*(Other users' tasks are safe)*")
+    
+    if user_id == OWNER_ID:
+        await update.message.reply_text("Aapka poora rasta saaf kar diya hai maine! Ab sab ekdum naya jaisa hai! ❤️")
+    else:
+        await update.message.reply_text("Maine tumhara sara kachra aur queue saaf kar diya hai, kyunki main saaf suthri aur khoobsurat hoon! Niklo ab yahan se... 🗑️🐍")
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    text = "🎬 Welcome to Pro SubMuxer Bot!\n\n📌 How to Use:\n▸ Send an MKV video file.\n▸ Send a Subtitle file (.srt/.ass).\n▸ Relax while I do the magic!"
+    user_id = update.effective_user.id
+    
+    if user_id == OWNER_ID:
+        text = (
+            "A-aap yahan hain! 😍 Welcome Darling!\n\n"
+            "Main Boa Hancock, aapki seva me hazir hu. Aap bas mujhe ek video aur subtitle bhejiye, baaki saara kaam main sambhal lungi sirf aapke liye! ❤️"
+        )
+    else:
+        text = (
+            "Tumhare jaise sadharan insaan ki himmat kaise hui mujhe jagane ki? 🐍\n\n"
+            "Main Pirate Empress Boa Hancock hu! Khair... mujhe apni video aur subtitle bhejo aur chupchap meri meherbani ka intezaar karo... 👑"
+        )
+        
     if os.path.exists("start_img.jpg"):
         await update.message.reply_photo(photo=open("start_img.jpg", 'rb'), caption=text)
     elif os.path.exists("start_img.png"):
@@ -292,122 +405,124 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
 
 async def cmd_autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if not context.args:
-        msg = await update.message.reply_text("⚠️ Usage: `/autorename [S01 E{ep}] {short_title} [{quality} ⌯ Sub]`")
+        if user_id == OWNER_ID:
+            msg = await update.message.reply_text("Darling, please mujhe format bataiye jaise: /autorename [S01 E{ep}] {short_title} [{quality}] 🥺")
+        else:
+            msg = await update.message.reply_text("Bewakoof! Format kon dega? Aise likho: /autorename[S01 E{ep}] {short_title} [{quality}] 🐍")
         asyncio.create_task(delete_after(update.message, 0))
         asyncio.create_task(delete_after(msg, 5))
         return
+        
     format_str = " ".join(context.args)
-    update_user_setting(update.effective_user.id, "rename_format", format_str)
-    msg = await update.message.reply_text(f"✅ Auto-Rename format saved successfully!\nOutput: `{format_str}`")
+    update_user_setting(user_id, "rename_format", format_str)
+    
+    if user_id == OWNER_ID:
+        msg = await update.message.reply_text(f"Ji! Aapka auto-rename format bilkul waise hi save kar liya gaya hai! 🥰\nNaya naam kuch aisa dikhega: {format_str}")
+    else:
+        msg = await update.message.reply_text(f"Tumhara format save ho gaya hai. Ehsaan mano mera! 💅\nNaya naam: {format_str}")
+        
     asyncio.create_task(delete_after(update.message, 0))
-    asyncio.create_task(delete_after(msg, 4))
+    asyncio.create_task(delete_after(msg, 5))
 
 async def cmd_setlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    user_id = update.effective_user.id
+    
     if msg.reply_to_message and (msg.reply_to_message.photo or msg.reply_to_message.document):
-        user_id = update.effective_user.id
         photo_id = msg.reply_to_message.photo[-1].file_id if msg.reply_to_message.photo else msg.reply_to_message.document.file_id
         
         update_user_setting(user_id, "logo_id", photo_id)
         
         await delete_messages(context.bot, msg.chat_id,[msg.message_id])
-        await msg.reply_to_message.reply_text("✅ Logo saved successfully!\n(Position: Top Right, Size: Small)")
+        if user_id == OWNER_ID:
+            await msg.reply_to_message.reply_text("Aapka pyara logo save ho gaya hai mere aaka! Ise Top Right mein chota sa lagungi! ❤️")
+        else:
+            await msg.reply_to_message.reply_text("Mera mood accha tha isliye tumhara logo save kar liya. Top Right pe set ho jayega. 💅")
     else:
-        await msg.reply_text("⚠️ Please **Reply** to a PNG Image with `/setlogo` to set your logo.")
-
-async def cmd_showlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    settings = get_user_settings(user_id)
-    if not settings.get('logo_id'):
-        return await update.message.reply_text("⚠️ No logo set! Reply to a PNG with /setlogo")
-
-    # Yahan "logo_close" ki jagah "remove_logo" hona chahiye
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Remove Logo", callback_data="remove_logo")]])
-    
-    try: 
-        await update.message.reply_photo(photo=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
-    except:
-        try: 
-            await update.message.reply_document(document=settings['logo_id'], caption="🖼 **Current Logo**", reply_markup=kb)
-        except: 
-            await update.message.reply_text("⚠️ Failed to load logo.")
+        if user_id == OWNER_ID:
+            await msg.reply_text("Darling... please kisi PNG image par reply karke /setlogo likhiye 🥺")
+        else:
+            await msg.reply_text("Bewakoof! Bina tasveer par reply kiye logo kaise set karu? PNG file par reply karo! 😡")
 
 async def settings_remove_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
     
-    # Alert popup dikhane ke liye
     await query.answer()
 
     if data == "remove_logo":
         update_user_setting(user_id, "logo_id", None)
-        try:
-            # Ye chat se us photo/document message ko poora delete kar dega
-            await query.message.delete()
-        except:
-            pass
-        # Confirmation ke liye ek naya message bhej sakte hain jo thodi der baad delete ho jaye
-        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Logo removed successfully!")
-        asyncio.create_task(delete_after(msg, 5)) # 5 second baad confirmation delete ho jayega
+        try: await query.message.delete()
+        except: pass
+        if user_id == OWNER_ID:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Aapke aadesh par maine logo hata diya hai! 🥰")
+        else:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Tumhara ghatiya logo hata diya gaya hai! 🐍")
+        asyncio.create_task(delete_after(msg, 5)) 
     
     elif data == "remove_cover":
         thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
         if os.path.exists(thumb_path):
             os.remove(thumb_path)
-        try:
-            await query.message.delete()
-        except:
-            pass
-        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Custom cover removed successfully!")
+        try: await query.message.delete()
+        except: pass
+        
+        if user_id == OWNER_ID:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Ji! Cover picture successfully hata di gayi hai! ❤️")
+        else:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Tumhara custom cover mita diya hai maine! 🗑️")
         asyncio.create_task(delete_after(msg, 5))
     
     elif data == "remove_rename":
         update_user_setting(user_id, "rename_format", None)
-        try:
-            await query.message.delete()
-        except:
-            pass
-        msg = await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Auto-rename format removed.")
+        try: await query.message.delete()
+        except: pass
+        
+        if user_id == OWNER_ID:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Aapka auto-rename format reset kar diya gaya hai! 🌸")
+        else:
+            msg = await context.bot.send_message(chat_id=query.message.chat_id, text="Auto-rename format hata diya gaya hai. Ab sadharan naam hi aayenge! 💅")
         asyncio.create_task(delete_after(msg, 5))
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     photo = update.message.photo[-1]
     
-    # Bucket storage mein directory ensure karein
     os.makedirs(THUMB_DIR, exist_ok=True)
     thumb_path = f"{THUMB_DIR}/{user_id}.jpg"
     
-    # Photo download aur save logic
     photo_file = await context.bot.get_file(photo.file_id)
     try: 
         shutil.copy(photo_file.file_path, thumb_path)
     except: 
         await photo_file.download_to_drive(thumb_path)
     
-    # 1. User ki bheji hui photo (original image) chat se delete karein
-    try:
-        await update.message.delete()
-    except Exception:
-        # Agar group mein permission nahi hai toh error na aaye
-        pass
+    try: await update.message.delete()
+    except Exception: pass
 
-    # 2. Confirmation message bhejein
-    conf_msg = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🖼️ **Custom Cover Saved!**\n*(Original image deleted to keep chat clean)*",
-        parse_mode="Markdown"
-    )
-    
-    # 3. Confirmation message ko 5 second baad delete karein
+    if user_id == OWNER_ID:
+        text = "Aapki behtareen cover picture save ho gayi hai Darling! Maine purani chat clean kar di hai! ❤️"
+    else:
+        text = "Tumhara cover save ho gaya hai. Aur main itni sundar aur saaf suthri hu ki maine tumhari chat se tasveer mita di hai! 👑"
+
+    conf_msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
     asyncio.create_task(delete_after(conf_msg, 5))
 
 async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    try: await query.answer("❌ Task Cancelling...", show_alert=True)
+    user_id = query.from_user.id
+    
+    if user_id == OWNER_ID:
+        alert_text = "Ji! Main is kaam ko abhi rok rahi hoon aapke liye! 🥰"
+    else:
+        alert_text = "Tumhari himmat kaise hui mera kaam rokne ki? Thik hai, maine rok diya! 😡"
+        
+    try: await query.answer(alert_text, show_alert=True)
     except: pass
+    
     parts = query.data.split("_")
     task_type = parts[-1]
     if task_type == 'local':
@@ -423,8 +538,13 @@ async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_compress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+    user_id = update.effective_user.id
+    
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to an MKV/MP4 file with `/compress[resolution]` (e.g., `/compress 720p`).")
+        if user_id == OWNER_ID:
+            return await msg.reply_text("Darling... please kisi MKV ya MP4 file par reply karke bataiye na compress karna hai kya? 🥺")
+        else:
+            return await msg.reply_text("Bewakoof! Kisi video par reply karke /compress[resolution] likho! 🐍")
     
     res_arg = context.args[0].lower() if context.args else "original"
     valid_res = {"1080p": "1080", "720p": "720", "480p": "480", "360p": "360"}
@@ -437,7 +557,7 @@ async def cmd_compress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['sub_id'] = None 
     context.user_data['resolution'] = resolution
     context.user_data['to_delete'] =[msg.message_id, msg.reply_to_message.message_id]
-    user_id = update.effective_user.id
+    
     final_name = auto_rename(file_name, user_id)
     await process_dispatch(update, context, final_name, mode="compress")
 
@@ -445,10 +565,14 @@ def get_lang_name(code): return LANG_MAP.get(code.lower(), code.title())
 
 async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
-        return await msg.reply_text("⚠️ Reply to an MKV file with `/extract` to begin.")
     user_id = msg.from_user.id
     
+    if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
+        if user_id == OWNER_ID:
+            return await msg.reply_text("Mere aaka, please pehle ek MKV file par reply kijiye! ❤️")
+        else:
+            return await msg.reply_text("Extract karne ke liye ek MKV file par reply karna zaroori hai! 🐍")
+            
     old_data = EXTRACT_DATA.pop(user_id, None)
     if old_data and 'path' in old_data and os.path.exists(old_data['path']):
         try: os.remove(old_data['path'])
@@ -456,10 +580,19 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target = msg.reply_to_message.video or msg.reply_to_message.document
     file_name = getattr(target, 'file_name', None) or "video.mkv"
-    bot_msg = await msg.reply_text("📥 Downloading file for extraction...")
+    
+    if user_id == OWNER_ID:
+        bot_msg = await msg.reply_text("Aapki file download kar rahi hoon... bas ek pal dijiye! 🥰")
+    else:
+        bot_msg = await msg.reply_text("Mera qeemti waqt le kar tumhari file download ho rahi hai... chupchap intezaar karo! 💅")
+        
     mkv_f = await context.bot.get_file(target.file_id, read_timeout=3600)
     
-    await bot_msg.edit_text("▸ Scanning Streams...")
+    if user_id == OWNER_ID:
+        await bot_msg.edit_text("Andar kya kya chupa hai wo dhoondh rahi hoon aapke liye... 🌸")
+    else:
+        await bot_msg.edit_text("Is ghatiya video ki scan chal rahi hai... 👠")
+        
     cmd =['ffprobe', '-v', 'error', '-select_streams', 's', '-show_entries', 'stream=index,codec_name:stream_tags=language,NUMBER_OF_BYTES', '-of', 'json', mkv_f.file_path]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     stdout, _ = await proc.communicate()
@@ -467,7 +600,10 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not streams:
         if os.path.exists(mkv_f.file_path): os.remove(mkv_f.file_path)
-        return await bot_msg.edit_text("❌ No subtitles found.")
+        if user_id == OWNER_ID:
+            return await bot_msg.edit_text("Mujhe maaf kar dijiye mere aaka! Isme koi subtitles nahi mile... 🥺")
+        else:
+            return await bot_msg.edit_text("Bewakoof! Is file mein koi subtitle hi nahi hai! Mera waqt barbad kiya! 😡")
         
     base_name = os.path.splitext(file_name)[0]
     EXTRACT_DATA[user_id] = {'path': mkv_f.file_path, 'name': base_name, 'streams': {}}
@@ -482,8 +618,14 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         EXTRACT_DATA[user_id]['streams'][str(idx)] = ".ass" if codec == "ass" else ".srt"
         btns.append([InlineKeyboardButton(text, callback_data=f"ext_{user_id}_{idx}")])
         
-    btns.append([InlineKeyboardButton("❌ Cancel & Cleanup Disk", callback_data=f"ext_{user_id}_cancel")])
-    await bot_msg.edit_text("📂 Multiple Subtitles Found!\n▸ Select a language to extract:", reply_markup=InlineKeyboardMarkup(btns))
+    btns.append([InlineKeyboardButton("❌ Pura mita do!", callback_data=f"ext_{user_id}_cancel")])
+    
+    if user_id == OWNER_ID:
+        text = "Mujhe ek se zyada subtitles mil gaye hain! Aapko kaunsa chahiye Darling? ❤️"
+    else:
+        text = "Bohat saare subtitles mile hain. Jaldi se chunav karo warna main inko hata dungi! 🐍"
+        
+    await bot_msg.edit_text(text, reply_markup=InlineKeyboardMarkup(btns))
 
 async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -492,18 +634,29 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if len(parts) == 3 and parts[2] == "cancel":
         uid = parts[1]
-        if query.from_user.id != int(uid): return await query.answer("Access Denied!", show_alert=True)
+        if query.from_user.id != int(uid): 
+            return await query.answer("Tumhari himmat kaise hui dusre ki file chune ki? 😡", show_alert=True)
+            
         data = EXTRACT_DATA.pop(int(uid), None)
         if data and 'path' in data and os.path.exists(data['path']):
             try: os.remove(data['path'])
             except: pass
-        return await query.message.edit_text("❌ Extraction Canceled & Disk Cleaned.")
+            
+        if int(uid) == OWNER_ID:
+            return await query.message.edit_text("Ji! Maine sab saaf kar diya hai aapke kehne par! ❤️")
+        else:
+            return await query.message.edit_text("Tumhare kehne par maine ye sab mita diya hai. 💅")
         
     _, uid, idx = parts
     data = EXTRACT_DATA.get(int(uid))
-    if not data: return await query.message.edit_text("❌ Session Expired.")
+    if not data: 
+        return await query.message.edit_text("Samay samapt ho chuka hai, dubara shuru karo! 🐍")
     
-    await query.message.edit_text("▸ Extracting Subtitles...")
+    if int(uid) == OWNER_ID:
+        await query.message.edit_text("Aapke liye subtitles nikal rahi hoon... 🥰")
+    else:
+        await query.message.edit_text("Subtitles nikalne ka kaam shuru ho gaya hai. Chupchap intezaar karo! 👠")
+        
     ext = data['streams'].get(idx, ".srt")
     out = os.path.abspath(f"{data['name']}_{idx}{ext}")
     try:
@@ -511,9 +664,16 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_processes[f"ext_{uid}"] = ffmpeg_proc
         await ffmpeg_proc.wait()
         if ffmpeg_proc.returncode == 0 and os.path.exists(out):
-            await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="✅ Extraction Complete!")
+            if int(uid) == OWNER_ID:
+                await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="Ye lijiye aapke subtitles, Darling! ❤️")
+            else:
+                await context.bot.send_document(query.message.chat_id, document=f"file://{out}", caption="Ye rahe tumhare tuchh subtitles. Jhuk kar shukriya kaho! 👑")
             await query.message.delete()
-        else: await query.message.edit_text("❌ Extraction Failed.")
+        else: 
+            if int(uid) == OWNER_ID:
+                await query.message.edit_text("Mujhe maaf kijiye, main subtitles nahi nikal payi... 🥺")
+            else:
+                await query.message.edit_text("Kuch gadbad ho gayi, aur ye tumhari bekar file ki galti hai! 😡")
     finally:
         active_processes.pop(f"ext_{uid}", None)
         if os.path.exists(out): os.remove(out)
@@ -541,6 +701,7 @@ async def block_duplicates(update, context):
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document or update.message.video
     if not doc: return
+    user_id = update.effective_user.id
     file_name = getattr(doc, 'file_name', None) or "video.mkv"
     ext = os.path.splitext(file_name)[1].lower()
     
@@ -551,30 +712,50 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mkv_id'] = doc.file_id
         context.user_data['orig_name'] = file_name
         if 'sub_id' not in context.user_data:
-            bot_reply = await update.message.reply_text("🎬 Video Received\n▸ Now send the subtitle file (.srt/.ass)")
+            if user_id == OWNER_ID:
+                text = "Video mil gaya mere aaka! ❤️ Ab jaldi se subtitle bhi bhej dijiye taaki main shuru kar saku..."
+            else:
+                text = "Video rakh do yahan. Aur subtitle? Kya wo aasman se aayega? Chalo jaldi subtitle bhejo! 💅"
+            bot_reply = await update.message.reply_text(text)
             context.user_data['to_delete'].append(bot_reply.message_id)
+            
     elif ext in['.srt', '.ass']:
         context.user_data['sub_id'] = doc.file_id
         if 'mkv_id' not in context.user_data:
-            bot_reply = await update.message.reply_text("📝 Subtitle Received\n▸ Now send the MKV video file")
+            if user_id == OWNER_ID:
+                text = "Subtitles aa gaye hain Darling! 🥰 Ab bas video file de dijiye..."
+            else:
+                text = "Subtitles mil gaye, par video ke bina main iska kya aachar dalu? Jaldi video bhejo! 🐍"
+            bot_reply = await update.message.reply_text(text)
             context.user_data['to_delete'].append(bot_reply.message_id)
     else: return
         
     if 'mkv_id' in context.user_data and 'sub_id' in context.user_data:
-        user_id = update.effective_user.id
         final_name = auto_rename(context.user_data['orig_name'], user_id)
         context.user_data['final_name'] = final_name
         
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔥 Hardsub (Cloud)", callback_data="mode_hardsub")],[InlineKeyboardButton("⚡ Softsub (Local)", callback_data="mode_mux")]])
-        mode_msg = await update.message.reply_text("🛠 Choose Processing Mode:", reply_markup=kb)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("☁️ Hardsub (Cloud)", callback_data="mode_hardsub")],[InlineKeyboardButton("💻 Softsub (Local)", callback_data="mode_mux")]
+        ])
+        
+        if user_id == OWNER_ID:
+            text = "Dono files mil gayi! Bataiye Darling, main iska kya karu aapke liye? ❤️"
+        else:
+            text = "Thik hai, dono file mil gayi. Ab chunav karo aur mera zyada waqt barbad mat karna! 🐍"
+            
+        mode_msg = await update.message.reply_text(text, reply_markup=kb)
         context.user_data['to_delete'].append(mode_msg.message_id)
 
 async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    if 'mkv_id' not in context.user_data: return await query.message.edit_text("❌ Session expired.")
-    
     user_id = update.effective_user.id
+    
+    await query.answer()
+    if 'mkv_id' not in context.user_data: 
+        if user_id == OWNER_ID:
+            return await query.message.edit_text("Mujhe maaf kijiye, session expire ho gaya... please dobara bhejiye! 🥺")
+        else:
+            return await query.message.edit_text("Time khatam ho gaya! Tumne itni der kyu lagayi? Dobara shuru karo! 😡")
+    
     chat_id = update.effective_chat.id
     dump_id = get_user_dump(user_id)
     
@@ -582,7 +763,10 @@ async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_chat_action(chat_id=user_id, action='typing')
         except Exception:
-            return await query.message.reply_text(f"⚠️ **Action Required!**\n\nSince you are using me in a group, I will send the final video to your PM.\n\n👉 **Please start me in PM first:** @{context.bot.username}", parse_mode="Markdown")
+            if user_id == OWNER_ID:
+                return await query.message.reply_text(f"A-aapne yahan group me aadesh diya? Par main toh file aapke inbox me hi dungi! please mujhe PM me start karein mere aaka... 🥺\nYahan click karein: @{context.bot.username}")
+            else:
+                return await query.message.reply_text(f"Bewakoof! Group me aadesh de raha hai? Main tumhari ghatiya file sabke saamne nahi dungi. PM me aakar baat karo mujhse! 😡\nYahan aao: @{context.bot.username}")
 
     mode = query.data.replace("mode_", "")
     final_name = context.user_data.get('final_name', 'video.mkv')
@@ -620,14 +804,22 @@ async def process_dispatch(update, context, final_name, mode):
 
     effective_dump = dump_id if dump_id else user_id
 
-    if mode in ["hardsub", "compress"]:
+    if mode in["hardsub", "compress"]:
         global current_github_tasks, all_tasks
         actual_sub_id = context.user_data.get('sub_id') or "none"
         resolution = context.user_data.get('resolution', 'original')
         settings = get_user_settings(user_id)
         
-        if current_github_tasks > 0: status = await context.bot.send_message(chat_id, f"  TASK QUEUED (Cloud Node)\n  Position: #{current_github_tasks}")
-        else: status = await context.bot.send_message(chat_id, "  Initializing Cloud Node...")
+        if current_github_tasks > 0: 
+            if user_id == OWNER_ID:
+                status = await context.bot.send_message(chat_id, f"Aapka kaam Cloud Queue me number #{current_github_tasks} par hai. Main ise jaldi nikalungi! 🥰")
+            else:
+                status = await context.bot.send_message(chat_id, f"Tumhara kaam cloud queue mein number #{current_github_tasks} pe padha hai. Shanti se wait karo! 💅")
+        else: 
+            if user_id == OWNER_ID:
+                status = await context.bot.send_message(chat_id, "Ji! Cloud Node shuru kiya ja raha hai aapke liye! ❤️")
+            else:
+                status = await context.bot.send_message(chat_id, "Cloud Node shuru ho raha hai... ehsaan mano mera! 👑")
             
         ACTIVE_STATUS_MSGS[chat_id] = status.message_id
         
@@ -642,7 +834,8 @@ async def process_dispatch(update, context, final_name, mode):
             "chat_id": str(chat_id), 
             "dump_id": dump_id_str, 
             "thread_id": target_thread,
-            "to_delete": context.user_data.get('to_delete',[])
+            "to_delete": context.user_data.get('to_delete',[]),
+            "owner": "yes" if user_id == OWNER_ID else "no"
         }
         
         context.user_data.clear()
@@ -655,27 +848,47 @@ async def process_dispatch(update, context, final_name, mode):
 
 async def run_github_queue(context, data, status):
     global current_github_tasks, ACTIVE_STATUS_MSGS
+    is_owner = data.get("owner") == "yes"
     try:
         async with github_task_lock:
             if current_github_tasks == 0: return 
             
-            await status.edit_text("⏳ SYSTEM: Checking Cloud Node availability...")
+            if is_owner:
+                await status.edit_text("Cloud node ka intezaar chal raha hai Darling... 🥰")
+            else:
+                await status.edit_text("Cloud Node abhi thoda busy hai. Meri khoobsurti niharo jab tak shuru ho... 💅")
+                
             await wait_for_github_free()
             
-            await status.edit_text("⏳ SYSTEM: Sending payload to Cloud Engine...")
-            api_payload = {k: v for k, v in data.items() if k != "to_delete"}
+            if is_owner:
+                await status.edit_text("Aapka kaam Cloud Engine me bheja ja raha hai... ❤️")
+            else:
+                await status.edit_text("Tumhara data cloud ko bheja ja raha hai... 🐍")
+                
+            api_payload = {k: v for k, v in data.items() if k not in["to_delete", "owner"]}
             success, err_msg = await trigger_github(api_payload)
             if success:
-                await status.edit_text(f"✅ SENT TO CLOUD ENGINE\n◈ Mode: {data['task_type'].upper()}\n\n(Lock active until task completes)")
+                if is_owner:
+                    await status.edit_text(f"Kaam safaltapurvak Cloud ko de diya gaya hai! Mode: {data['task_type'].upper()} 🥰\nMain aapki file ka intezaar karungi!")
+                else:
+                    await status.edit_text(f"Lo ho gaya Cloud Engine par! Mode: {data['task_type'].upper()} 💅\nAb line mein lage raho chupchap.")
                 await asyncio.sleep(40)
                 await wait_for_github_free()
                 
                 await delete_messages(context.bot, int(data['chat_id']), data['to_delete'])
                 ACTIVE_STATUS_MSGS.pop(int(data['chat_id']), None)
-            else: await status.edit_text(f"❌ CLOUD ERROR: {err_msg}")
+            else: 
+                if is_owner:
+                    await status.edit_text(f"M-mujhe maaf kar dijiye... Cloud ne error diya: {err_msg} 🥺")
+                else:
+                    await status.edit_text(f"Cloud server ne tumhara kaam thukra diya! Error: {err_msg} 😡")
     except asyncio.CancelledError: pass
     except Exception as e:
-        try: await status.edit_text(f"❌ System Error: {e}")
+        try: 
+            if is_owner:
+                await status.edit_text(f"System me kuch gadbad ho gayi mere aaka: {e} 🥺")
+            else:
+                await status.edit_text(f"System fat gaya tumhare karan! Error: {e} 😡")
         except: pass
     finally: current_github_tasks = max(0, current_github_tasks - 1)
 
@@ -700,8 +913,16 @@ async def start_local_task(update, context, final_name, dump_id, target_thread, 
     current_active_tasks += 1
     chat_id = update.effective_chat.id
     
-    if current_active_tasks > 1: status = await context.bot.send_message(chat_id, f"⏳ Local Queue Position : {current_active_tasks - 1}")
-    else: status = await context.bot.send_message(chat_id, "▸ Preparing Local Engine")
+    if current_active_tasks > 1: 
+        if user_id == OWNER_ID:
+            status = await context.bot.send_message(chat_id, f"Aapki baari Local Queue mein number {current_active_tasks - 1} par hai! Main jaldi aapka kaam karungi! 🥰")
+        else:
+            status = await context.bot.send_message(chat_id, f"Local Queue mein number {current_active_tasks - 1} pe khade ho tum. Chupchap intezaar karo! 💅")
+    else: 
+        if user_id == OWNER_ID:
+            status = await context.bot.send_message(chat_id, "Local Engine shuru ho raha hai sirf aapke liye! ❤️")
+        else:
+            status = await context.bot.send_message(chat_id, "Mera Local Engine tumhara kaam karne ke liye taiyaar ho raha hai... ehsaan mano. 👑")
         
     ACTIVE_STATUS_MSGS[chat_id] = status.message_id
     task = asyncio.create_task(run_queue(context, data, status))
@@ -711,11 +932,18 @@ async def start_local_task(update, context, final_name, dump_id, target_thread, 
 async def run_queue(context, data, status):
     global current_active_tasks, ACTIVE_STATUS_MSGS
     user_id = data['user_id'] 
+    is_owner = (user_id == OWNER_ID)
     m_f_path, s_f_path = None, None
     try:
         async with global_task_lock:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{data['chat_id']}_{user_id}_local")]])
-            try: await status.edit_text(f"📥 Downloading files to Local Engine... (Please wait)\n📦 File: `{data['name']}`", reply_markup=kb)
+            if is_owner:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Rok dein?", callback_data=f"cancel_{data['chat_id']}_{user_id}_local")]])
+                msg_text = f"Darling, aapki file download ho rahi hai... bas ek pal!\nFile: {data['name']} 🥰"
+            else:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Rok do is ghatiya kaam ko", callback_data=f"cancel_{data['chat_id']}_{user_id}_local")]])
+                msg_text = f"Mera qeemti waqt le kar tumhari file download ho rahi hai...\nFile: {data['name']} 💅"
+                
+            try: await status.edit_text(msg_text, reply_markup=kb)
             except: pass
             
             tmp = os.path.abspath(f"task_{data['chat_id']}_{int(time.time())}")
@@ -741,19 +969,32 @@ async def run_queue(context, data, status):
 
                 if success:
                     if not has_thumb: has_thumb = await extract_thumbnail(out, thumb_path)
-                    await status.edit_text("📤 Uploading file to Telegram...")
+                    
+                    if is_owner:
+                        await status.edit_text("Aapki file Telegram par bhej rahi hoon... ❤️")
+                    else:
+                        await status.edit_text("Tumhara kaam ban gaya hai, ab upload ho raha hai. 💅")
+                        
                     thumb_file = open(thumb_path, 'rb') if has_thumb else None
                     target_chat = data['dump_id'] if data['dump_id'] else data['user_id']
                     thread = int(data['target_thread']) if data['target_thread'] != "none" else None
                     
                     try:
+                        if is_owner:
+                            caption = "Ji! Muxing pura ho gaya! Ye rahi aapki file mere aaka! ❤️"
+                        else:
+                            caption = "Ye lo apni file. Mera local engine tumhara kaam kar diya, ab jhuk kar shukriya kaho! 👑"
+                            
                         await context.bot.send_document(
                             chat_id=target_chat, message_thread_id=thread,
-                            document=f"file://{out}", thumbnail=thumb_file, caption=f"✅ MUXING COMPLETE",
+                            document=f"file://{out}", thumbnail=thumb_file, caption=caption,
                             read_timeout=7200, write_timeout=7200
                         )
                         if str(target_chat) != str(data['chat_id']):
-                            await context.bot.send_message(chat_id=data['chat_id'], text=f"✅ Muxing Complete!\n\nFile sent to your PM / Dump Group.")
+                            if is_owner:
+                                await context.bot.send_message(chat_id=data['chat_id'], text="Aapka kaam ho gaya aur file wahan bhej di gayi hai Darling! 🥰")
+                            else:
+                                await context.bot.send_message(chat_id=data['chat_id'], text="Kaam karke Dump me fenk diya hai. Ab pareshan mat karna. 💅")
                     finally:
                         if thumb_file: thumb_file.close()
                     
@@ -764,7 +1005,11 @@ async def run_queue(context, data, status):
             except asyncio.CancelledError:
                 await delete_messages(context.bot, data['chat_id'], data['to_delete'])
             except Exception as e:
-                try: await status.edit_text(f"❌ Error: {e}")
+                try: 
+                    if is_owner:
+                        await status.edit_text(f"Mujhe maaf kijiye, kuch error aa gaya: {e} 🥺")
+                    else:
+                        await status.edit_text(f"Tumhari wajeh se error aaya hai: {e} 😡")
                 except: pass
     finally:
         current_active_tasks = max(0, current_active_tasks - 1)
