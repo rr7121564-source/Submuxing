@@ -35,6 +35,54 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
+async def get_media_info(file_path):
+    cmd =['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', file_path]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    stdout, _ = await proc.communicate()
+    try:
+        import json
+        data = json.loads(stdout.decode())
+        format_info = data.get('format', {})
+        streams = data.get('streams',[])
+        
+        duration = float(format_info.get('duration', 0))
+        size = int(format_info.get('size', 0)) / (1024 * 1024)
+        bitrate = int(format_info.get('bit_rate', 0)) / 1000
+        
+        v_stream = next((s for s in streams if s['codec_type'] == 'video'), None)
+        a_stream = next((s for s in streams if s['codec_type'] == 'audio'), None)
+        
+        res = f"⏱ **Duration:** {get_readable_time(duration)}\n"
+        res += f"💾 **Size:** {size:.2f} MB\n"
+        res += f"⚡ **Bitrate:** {bitrate:.0f} kbps\n\n"
+        
+        if v_stream:
+            res += f"🎬 **Video:** {v_stream.get('codec_name', 'unknown').upper()} | {v_stream.get('width', '?')}x{v_stream.get('height', '?')}\n"
+        if a_stream:
+            res += f"🎵 **Audio:** {a_stream.get('codec_name', 'unknown').upper()} | {a_stream.get('sample_rate', '?')} Hz\n"
+            
+        return res
+    except Exception:
+        return "❌ Failed to parse media info."
+
+async def generate_screenshots(file_path, num_screens, output_folder):
+    duration = await get_duration(file_path)
+    if duration <= 0: return[]
+    interval = duration / (num_screens + 1)
+    os.makedirs(output_folder, exist_ok=True)
+    images =[]
+    
+    for i in range(1, num_screens + 1):
+        timestamp = interval * i
+        out_path = os.path.join(output_folder, f"screen_{i}.jpg")
+        cmd =['ffmpeg', '-y', '-ss', str(timestamp), '-i', file_path, '-vframes', '1', '-q:v', '2', out_path]
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await proc.communicate()
+        if os.path.exists(out_path):
+            images.append(out_path)
+            
+    return images
+
 async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_name, user_id, mode="mux", task_fonts_dir="fonts"):
     duration = await get_duration(mkv_path)
     font_args =[]
@@ -54,7 +102,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
         '-map', '0:v', '-map', '0:a?', '-map', '1:0',
         '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec,
         '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
-    ] + font_args +['-progress', 'pipe:1', output_path]
+    ] + font_args + ['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     
