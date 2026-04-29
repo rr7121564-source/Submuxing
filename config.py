@@ -5,6 +5,11 @@ import asyncio
 # Settings
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("ADMIN_ID", 0))
+
+# Naye Auth Variables (Multiple IDs ke liye comma lagayein)
+AUTH_USERS =[int(x) for x in os.getenv("AUTH_USERS", "").split(",") if x.strip()]
+AUTH_CHATS =[int(x) for x in os.getenv("AUTH_CHATS", "").split(",") if x.strip()]
+
 PORT = int(os.environ.get("PORT", 7860))
 
 # GitHub Actions Credentials (For Hardsub & Compress)
