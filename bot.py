@@ -183,7 +183,7 @@ async def cmd_unauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del_auth_user(target_id)
             await update.message.reply_text(f"Is badtameez {target_id} ko maine nikal diya! Mujhe sirf aapki zaroorat hai... ❤️")
     except ValueError:
-        await update.message.reply_text("Galat ID format hai mere aaka, please dobara koshish karein... 🌸")
+        await update.message.reply_text("Galat ID format hai Darling, please dobara koshish karein... 🌸")
 
 async def cmd_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_active_tasks, current_github_tasks
@@ -394,7 +394,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = (
             "Tumhare jaise sadharan insaan ki himmat kaise hui mujhe jagane ki? 🐍\n\n"
-            "Main Pirate Empress Boa Hancock hu! Khair... mujhe apni video aur subtitle bhejo aur chupchap meri meherbani ka intezaar karo... 👑"
+            "Main Pirate Empress Boa Hancock hu! Khair... mujhe apni MKV video aur subtitle bhejo aur chupchap meri meherbani ka intezaar karo... 👑"
         )
         
     if os.path.exists("start_img.jpg"):
@@ -437,7 +437,7 @@ async def cmd_setlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await delete_messages(context.bot, msg.chat_id,[msg.message_id])
         if user_id == OWNER_ID:
-            await msg.reply_to_message.reply_text("Aapka pyara logo save ho gaya hai mere aaka! Ise Top Right mein chota sa lagungi! ❤️")
+            await msg.reply_to_message.reply_text("Aapka pyara logo save ho gaya hai Darling! Ise Top Right mein chota sa lagungi! ❤️")
         else:
             await msg.reply_to_message.reply_text("Mera mood accha tha isliye tumhara logo save kar liya. Top Right pe set ho jayega. 💅")
     else:
@@ -569,7 +569,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not msg.reply_to_message or not (msg.reply_to_message.video or msg.reply_to_message.document):
         if user_id == OWNER_ID:
-            return await msg.reply_text("Mere aaka, please pehle ek MKV file par reply kijiye! ❤️")
+            return await msg.reply_text("Darling, please pehle ek MKV file par reply kijiye! ❤️")
         else:
             return await msg.reply_text("Extract karne ke liye ek MKV file par reply karna zaroori hai! 🐍")
             
@@ -601,7 +601,7 @@ async def cmd_extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not streams:
         if os.path.exists(mkv_f.file_path): os.remove(mkv_f.file_path)
         if user_id == OWNER_ID:
-            return await bot_msg.edit_text("Mujhe maaf kar dijiye mere aaka! Isme koi subtitles nahi mile... 🥺")
+            return await bot_msg.edit_text("Mujhe maaf kar dijiye Darling! Isme koi subtitles nahi mile... 🥺")
         else:
             return await bot_msg.edit_text("Bewakoof! Is file mein koi subtitle hi nahi hai! Mera waqt barbad kiya! 😡")
         
@@ -682,15 +682,34 @@ async def do_extract_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         EXTRACT_DATA.pop(int(uid), None)
 
-async def check_access(update, context):
+async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_chat or not update.effective_user: return
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
+    # Agar user/group authorized hai, toh aage badhne do
     if user_id == OWNER_ID or user_id in AUTH_USERS or chat_id in AUTH_CHATS: 
         return
         
+    # Agar authorized NAHI hai
     if not is_chat_auth(chat_id) and not is_user_auth(user_id): 
+        msg = update.effective_message
+        
+        # Sirf tabhi reply karegi jab user PM me ho, YA group me koi command (/) use kare
+        if msg and msg.text:
+            if chat_id == user_id or msg.text.startswith('/'):
+                denied_text = (
+                    "Tumhari himmat kaise hui mujhe aadesh dene ki? 🐍\n\n"
+                    "Main Pirate Empress Boa Hancock hoon! Jab tak Darling (Owner) tumhe ijazat nahi dete, "
+                    "mujhse baat karne ki koshish bhi mat karna! Dafa ho jao yahan se! 👠\n\n"
+                    f"*(Apni aukaat yaad rakhne ke liye ye ID apne paas rakh lo: `{user_id}`)*"
+                )
+                try:
+                    await msg.reply_text(denied_text, parse_mode="Markdown")
+                except Exception:
+                    pass
+                    
+        # Uske baad process ko rok do taaki command run na ho
         raise ApplicationHandlerStop()
 
 async def block_duplicates(update, context):
@@ -713,7 +732,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['orig_name'] = file_name
         if 'sub_id' not in context.user_data:
             if user_id == OWNER_ID:
-                text = "Video mil gaya mere aaka! ❤️ Ab jaldi se subtitle bhi bhej dijiye taaki main shuru kar saku..."
+                text = "Video mil gaya Darling! ❤️ Ab jaldi se subtitle bhi bhej dijiye taaki main shuru kar saku..."
             else:
                 text = "Video rakh do yahan. Aur subtitle? Kya wo aasman se aayega? Chalo jaldi subtitle bhejo! 💅"
             bot_reply = await update.message.reply_text(text)
@@ -747,12 +766,12 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = update.effective_user.id
+    user_id = query.from_user.id
     
     await query.answer()
     if 'mkv_id' not in context.user_data: 
         if user_id == OWNER_ID:
-            return await query.message.edit_text("Mujhe maaf kijiye, session expire ho gaya... please dobara bhejiye! 🥺")
+            return await query.message.edit_text("Mujhe maaf kijiye, session expire ho gaya... kripya dobara bhejiye! 🥺")
         else:
             return await query.message.edit_text("Time khatam ho gaya! Tumne itni der kyu lagayi? Dobara shuru karo! 😡")
     
@@ -764,16 +783,23 @@ async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_chat_action(chat_id=user_id, action='typing')
         except Exception:
             if user_id == OWNER_ID:
-                return await query.message.reply_text(f"A-aapne yahan group me aadesh diya? Par main toh file aapke inbox me hi dungi! please mujhe PM me start karein mere aaka... 🥺\nYahan click karein: @{context.bot.username}")
+                return await query.message.reply_text(f"A-aapne yahan group me aadesh diya? Par main toh file aapke inbox me hi dungi! Please mujhe PM me start karein Darling... 🥺\nYahan click karein: @{context.bot.username}")
             else:
                 return await query.message.reply_text(f"Bewakoof! Group me aadesh de raha hai? Main tumhari ghatiya file sabke saamne nahi dungi. PM me aakar baat karo mujhse! 😡\nYahan aao: @{context.bot.username}")
 
     mode = query.data.replace("mode_", "")
     final_name = context.user_data.get('final_name', 'video.mkv')
     
+    # 💡 YAHAN HAI MAGIC LOGIC 💡
+    base_name, ext = os.path.splitext(final_name)
+    
     if mode == "hardsub":
-        base_name, _ = os.path.splitext(final_name)
+        # Hardsub humesha MP4 me nikalna chahiye
         final_name = f"{base_name}.mp4"
+    elif mode == "mux":
+        # Softsub humesha MKV me hoga! 
+        # Agar user ne MP4 diya hai, toh ye use automatically MKV me badal dega.
+        final_name = f"{base_name}.mkv"
         
     await query.message.delete()
     await process_dispatch(update, context, final_name, mode=mode)
@@ -886,7 +912,7 @@ async def run_github_queue(context, data, status):
     except Exception as e:
         try: 
             if is_owner:
-                await status.edit_text(f"System me kuch gadbad ho gayi mere aaka: {e} 🥺")
+                await status.edit_text(f"System me kuch gadbad ho gayi Darling: {e} 🥺")
             else:
                 await status.edit_text(f"System fat gaya tumhare karan! Error: {e} 😡")
         except: pass
@@ -981,7 +1007,7 @@ async def run_queue(context, data, status):
                     
                     try:
                         if is_owner:
-                            caption = "Ji! Muxing pura ho gaya! Ye rahi aapki file mere aaka! ❤️"
+                            caption = "Ji! Muxing pura ho gaya! Ye rahi aapki file Darling! ❤️"
                         else:
                             caption = "Ye lo apni file. Mera local engine tumhara kaam kar diya, ab jhuk kar shukriya kaho! 👑"
                             
