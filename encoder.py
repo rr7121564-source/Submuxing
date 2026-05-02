@@ -30,6 +30,7 @@ raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
 RESOLUTION = "original"
 ORIG_NAME = RENAME
+VIDEO_MSG_ID = None
 
 if ":::" in raw_dump:
     parts = raw_dump.split(":::")
@@ -38,6 +39,7 @@ if ":::" in raw_dump:
     if len(parts) > 2: STATUS_MSG_ID = parts[2]
     if len(parts) > 3: RESOLUTION = parts[3]
     if len(parts) > 4: ORIG_NAME = parts[4]
+    if len(parts) > 5: VIDEO_MSG_ID = parts[5]
 else:
     DUMP_ID = raw_dump
     LOGO_ID = "none"
@@ -82,9 +84,8 @@ async def progress_bar(current, total, app, msg_id, action_text, current_file_na
             text = (
                 f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
                 "──────────────────────\n"
-                f"📦 " + sc("ғɪʟᴇ  :") + f" {current_file_name}\n\n"
                 f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {action_text}\n"
-                f"📊 [{bar}] {perc:.2f}%\n"
+                f"📊[{bar}] {perc:.2f}%\n"
                 f"🚀 Speed: {speed/(1024*1024):.2f} MB/s\n"
                 f"💾 Size: {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 f"⏱ ETA: {eta_str}\n"
@@ -103,12 +104,10 @@ async def download_phase():
     
     if STATUS_MSG_ID:
         msg_id = int(STATUS_MSG_ID)
-        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
-        except:
-            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
-            msg_id = status_msg.id
+        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb)
+        except: pass
     else:
-        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
+        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb, reply_to_message_id=int(VIDEO_MSG_ID) if VIDEO_MSG_ID and str(VIDEO_MSG_ID) != "None" else None)
         msg_id = status_msg.id
     
     dl_start_time = time.time()
@@ -133,7 +132,7 @@ async def download_phase():
             progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Lᴏɢᴏ", ORIG_NAME, logo_start_time)
         )
         
-    await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
+    await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n"), reply_markup=cancel_kb)
     await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
@@ -221,7 +220,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     text = (
                         f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
                         "──────────────────────\n"
-                        f"📦 " + sc("ғɪʟᴇ  :") + f" {RENAME}\n\n"
                         f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
                         f"📊 [{bar}] {perc:.2f}%\n"
                         f"🚀 Speed: {speed_bps:.2f}x\n"
@@ -253,22 +251,26 @@ async def upload_phase(output, returncode, msg_id):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, sc("▸ Pʀᴏᴄᴇssɪɴɢ Dᴏɴᴇ! Uᴘʟᴏᴀᴅ ᴄʜᴀʟ ʀᴀʜᴀ ʜᴀɪ...\n") + f"📦 `{RENAME}`")
+        await app.edit_message_text(CHAT_ID, msg_id, sc("▸ Pʀᴏᴄᴇssɪɴɢ Dᴏɴᴇ! Uᴘʟᴏᴀᴅ ᴄʜᴀʟ ʀᴀʜᴀ ʜᴀɪ...\n"))
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
         cap = sc(f"✅ {TASK_TYPE.upper()} Cᴏᴍᴘʟᴇᴛᴇ\n") + f"📦 `{RENAME}`"
         
+        reply_id = thread
+        if target_chat == CHAT_ID and VIDEO_MSG_ID and str(VIDEO_MSG_ID) != "None":
+            reply_id = int(VIDEO_MSG_ID)
+        
         up_start_time = time.time()
         try:
             await app.send_document(
-                chat_id=target_chat, document=output, reply_to_message_id=thread,
+                chat_id=target_chat, document=output, reply_to_message_id=reply_id,
                 thumb=thumb_path if has_thumb else None, caption=cap,
                 progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ", RENAME, up_start_time)
             )
             if target_chat != CHAT_ID:
                 await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"))
-            await app.delete_messages(CHAT_ID, msg_id)
+            await app.delete_messages(CHAT_ID, [msg_id])
         except Exception as e:
             await app.edit_message_text(CHAT_ID, msg_id, sc(f"❌ Uᴘʟᴏᴀᴅ Eʀʀᴏʀ: {str(e)}"))
     else:
