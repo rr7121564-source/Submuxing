@@ -26,6 +26,7 @@ THREAD_ID = os.getenv("THREAD_ID")
 raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
 RESOLUTION = "original"
+THUMB_ID = "none"
 
 if ":::" in raw_dump:
     parts = raw_dump.split(":::")
@@ -33,11 +34,17 @@ if ":::" in raw_dump:
     LOGO_ID = parts[1]
     if len(parts) > 2: STATUS_MSG_ID = parts[2]
     if len(parts) > 3: RESOLUTION = parts[3]
+    if len(parts) > 4: THUMB_ID = parts[4]
 else:
     DUMP_ID = raw_dump
     LOGO_ID = "none"
 
 last_edit_time = 0
+
+FONT_MAP = str.maketrans("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ")
+
+def boa(text):
+    return text.translate(FONT_MAP)
 
 def get_readable_time(seconds: int) -> str:
     result = ""
@@ -67,16 +74,11 @@ async def progress_bar(current, total, app, msg_id, action_text):
             filled = int((perc / 100) * bar_length)
             bar = "▓" * filled + "░" * (bar_length - filled)
             
-            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(boa("❌ Cancel"), callback_data="cancel_cloud_task_cloud")]])
             text = (
-                f"🎬  GITHUB WORKER \n"
-                "──────────────────────────\n"
-                f"📦 File     : `{RENAME}`\n"
-                f"▸ Status    : {action_text}\n"
-                f"▸ Progress  : {bar}  {perc:.1f}%\n"
-                f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
-                "──────────────────────────\n"
-                "⚙ Running on Cloud Engine"
+                boa("🎬 GITHUB WORKER\n───────────────────\n📦 File: ") + f"`{RENAME}`\n" +
+                boa(f"▸ Status: {action_text}\n▸ Progress: ") + f"{bar} {perc:.1f}%\n" +
+                boa(f"▸ Size: {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n───────────────────\n⚙ Running on Cloud Engine")
             )
             await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
             last_edit_time = now
@@ -86,30 +88,35 @@ async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(boa("❌ Cancel"), callback_data="cancel_cloud_task_cloud")]])
     
+    initial_text = boa("⚙ Worker Triggered: Preparing...\n📦 File: ") + f"`{RENAME}`"
     if STATUS_MSG_ID:
         msg_id = int(STATUS_MSG_ID)
-        try: await app.edit_message_text(CHAT_ID, msg_id, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        try: await app.edit_message_text(CHAT_ID, msg_id, initial_text, reply_markup=cancel_kb)
         except:
-            status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+            status_msg = await app.send_message(CHAT_ID, initial_text, reply_markup=cancel_kb)
             msg_id = status_msg.id
     else:
-        status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        status_msg = await app.send_message(CHAT_ID, initial_text, reply_markup=cancel_kb)
         msg_id = status_msg.id
     
-    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
+    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "Downloading Video"))
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
-        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
+        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "Downloading Subtitle"))
         
     logo_path = None
     if TASK_TYPE == "hardsub" and LOGO_ID != "none":
-        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
+        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "Downloading Logo"))
         
-    await app.edit_message_text(CHAT_ID, msg_id, f"🔥 Starting FFmpeg Engine...\n📦 File: `{RENAME}`\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
+    thumb_path_local = None
+    if THUMB_ID != "none":
+        thumb_path_local = await app.download_media(THUMB_ID, file_name="custom_thumb.jpg")
+        
+    await app.edit_message_text(CHAT_ID, msg_id, boa("🔥 Starting FFmpeg Engine...\n📦 File: ") + f"`{RENAME}`\n" + boa("*(Connection Paused)*"), reply_markup=cancel_kb)
     await app.stop() 
-    return video_path, sub_path, logo_path, msg_id
+    return video_path, sub_path, logo_path, msg_id, thumb_path_local
 
 async def encode_phase(video_path, sub_path, logo_path, msg_id):
     output = RENAME
@@ -191,17 +198,11 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     filled = int((perc / 100) * bar_length)
                     bar = "▓" * filled + "░" * (bar_length - filled)
                     
-                    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+                    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(boa("❌ Cancel"), callback_data="cancel_cloud_task_cloud")]])
                     text = (
-                        f"🎬  {engine_name} \n"
-                        "──────────────────────────\n"
-                        f"📦 File     : `{RENAME}`\n"
-                        f"▸ Status    : Processing Frame...\n"
-                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
-                        f"▸ Velocity  : {speed:.2f}x\n"
-                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
-                        "──────────────────────────\n"
-                        "⚙ GitHub Cloud Worker"
+                        boa(f"🎬 {engine_name}\n───────────────────\n📦 File: ") + f"`{RENAME}`\n" +
+                        boa(f"▸ Status: Processing...\n▸ Progress: ") + f"{bar} {perc:.2f}%\n" +
+                        boa(f"▸ Velocity: {speed:.2f}x\n▸ ETA: ~{get_readable_time(eta)}\n───────────────────\n⚙ GitHub Cloud Worker")
                     )
                     try: await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
                     except: pass
@@ -218,38 +219,42 @@ async def extract_thumbnail(video_path, thumb_path):
     await proc.communicate()
     return os.path.exists(thumb_path)
 
-async def upload_phase(output, returncode, msg_id):
+async def upload_phase(output, returncode, msg_id, custom_thumb):
     app = Client("worker_up", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
     if returncode == 0 and os.path.exists(output):
-        thumb_path = "thumb.jpg"
-        has_thumb = await extract_thumbnail(output, thumb_path)
+        if custom_thumb and os.path.exists(custom_thumb):
+            thumb_path = custom_thumb
+            has_thumb = True
+        else:
+            thumb_path = "thumb.jpg"
+            has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, f"▸ Processing Done! Starting Fresh Upload...\n📦 File: `{RENAME}`")
+        await app.edit_message_text(CHAT_ID, msg_id, boa("▸ Processing Done! Uploading...\n📦 File: ") + f"`{RENAME}`")
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
-        cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
+        cap = boa(f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: ") + f"`{RENAME}`"
         
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
-                progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
+                progress=progress_bar, progress_args=(app, msg_id, "Uploading Video")
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully sent to your PM / Dump Group!")
+                await app.send_message(CHAT_ID, cap + boa("\n\nSent to Dump!"))
             await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
-            await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
+            await app.edit_message_text(CHAT_ID, msg_id, boa(f"❌ Upload Error: {str(e)}"))
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        await app.edit_message_text(CHAT_ID, msg_id, boa("❌ FFmpeg Error: Failed to Process Video."))
     
     await app.stop()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    vid, sub, logo, mid = loop.run_until_complete(download_phase())
+    vid, sub, logo, mid, t_path = loop.run_until_complete(download_phase())
     out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
-    loop.run_until_complete(upload_phase(out, rcode, mid))
+    loop.run_until_complete(upload_phase(out, rcode, mid, t_path))
