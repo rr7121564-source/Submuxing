@@ -29,6 +29,7 @@ THREAD_ID = os.getenv("THREAD_ID")
 raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
 RESOLUTION = "original"
+ORIG_NAME = RENAME
 
 if ":::" in raw_dump:
     parts = raw_dump.split(":::")
@@ -36,6 +37,7 @@ if ":::" in raw_dump:
     LOGO_ID = parts[1]
     if len(parts) > 2: STATUS_MSG_ID = parts[2]
     if len(parts) > 3: RESOLUTION = parts[3]
+    if len(parts) > 4: ORIG_NAME = parts[4]
 else:
     DUMP_ID = raw_dump
     LOGO_ID = "none"
@@ -50,7 +52,7 @@ def get_readable_time(seconds: int) -> str:
     if int(hours) != 0: result += f"{int(hours)}h "
     (minutes, seconds) = divmod(remainder, 60)
     if int(minutes) != 0: result += f"{int(minutes)}m "
-    result += f"{int(seconds)} sec"
+    result += f"{int(seconds)}s"
     return result.strip()
 
 async def get_duration(file_path):
@@ -60,25 +62,33 @@ async def get_duration(file_path):
     try: return float(stdout.decode().strip())
     except: return 0.0
 
-async def progress_bar(current, total, app, msg_id, action_text):
+async def progress_bar(current, total, app, msg_id, action_text, current_file_name, start_time):
     global last_edit_time
     now = time.time()
     if now - last_edit_time > 5 or current == total:
         try:
             perc = (current / total) * 100 if total > 0 else 0
-            bar_length = 14
+            bar_length = 10
             filled = int((perc / 100) * bar_length)
-            bar = "▓" * filled + "░" * (bar_length - filled)
+            bar = "▰" * filled + "▱" * (bar_length - filled)
+            
+            elapsed = now - start_time
+            speed = current / elapsed if elapsed > 0 else 0
+            eta_seconds = (total - current) / speed if speed > 0 else 0
+            
+            eta_str = get_readable_time(eta_seconds) if eta_seconds > 0 else "0s"
             
             cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
             text = (
                 f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
-                "──────────────────────────\n"
-                f"📦 " + sc("ғɪʟᴇ  :") + f" `{RENAME}`\n"
-                f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {sc(action_text)}\n"
-                f"▸ " + sc("ᴘʀᴏɢʀᴇss:") + f" {bar}  {perc:.1f}%\n"
-                f"▸ " + sc("sɪᴢᴇ  :") + f" {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
-                "──────────────────────────\n"
+                "──────────────────────\n"
+                f"📦 " + sc("ғɪʟᴇ  :") + f" {current_file_name}\n\n"
+                f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {action_text}\n"
+                f"📊 [{bar}] {perc:.2f}%\n"
+                f"🚀 Speed: {speed/(1024*1024):.2f} MB/s\n"
+                f"💾 Size: {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
+                f"⏱ ETA: {eta_str}\n"
+                "──────────────────────\n"
                 "🐍 " + sc("ʙᴏᴀ ʜᴀɴᴄᴏᴄᴋ ᴄʟᴏᴜᴅ ᴇɴɢɪɴᴇ")
             )
             await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
@@ -93,22 +103,35 @@ async def download_phase():
     
     if STATUS_MSG_ID:
         msg_id = int(STATUS_MSG_ID)
-        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
+        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
         except:
-            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
+            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
             msg_id = status_msg.id
     else:
-        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
+        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{ORIG_NAME}`", reply_markup=cancel_kb)
         msg_id = status_msg.id
     
-    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ"))
+    dl_start_time = time.time()
+    video_path = await app.download_media(
+        VIDEO_ID, file_name="video.mkv", 
+        progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ", ORIG_NAME, dl_start_time)
+    )
+    
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
-        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Sᴜʙᴛɪᴛʟᴇ"))
+        sub_start_time = time.time()
+        sub_path = await app.download_media(
+            SUB_ID, 
+            progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Sᴜʙᴛɪᴛʟᴇ", ORIG_NAME, sub_start_time)
+        )
         
     logo_path = None
     if TASK_TYPE == "hardsub" and LOGO_ID != "none":
-        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Lᴏɢᴏ"))
+        logo_start_time = time.time()
+        logo_path = await app.download_media(
+            LOGO_ID, 
+            progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Lᴏɢᴏ", ORIG_NAME, logo_start_time)
+        )
         
     await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
     await app.stop() 
@@ -146,7 +169,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             ] if sub_filter else[
                 'ffmpeg', '-y', '-i', video_path, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
             ]
-        engine_name = "Hᴀʀᴅsᴜʙ Eɴɢɪɴᴇ"
     else:
         if RESOLUTION != "original":
             vf_scale = f"scale=-2:{RESOLUTION}"
@@ -164,7 +186,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
                 '-progress', 'pipe:1', output
             ]
-        engine_name = "Cᴏᴍᴘʀᴇssɪᴏɴ Eɴɢɪɴᴇ"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
@@ -187,23 +208,26 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                 if duration > 0 and (now - last_up) > 10:
                     perc = min(100, (cur / duration) * 100)
                     elapsed = now - start_time
-                    speed = cur / elapsed if elapsed > 0 else 0
-                    eta = (duration - cur) / speed if speed > 0 else 0
+                    speed_bps = cur / elapsed if elapsed > 0 else 0
+                    eta = (duration - cur) / speed_bps if speed_bps > 0 else 0
                     
-                    bar_length = 14
+                    bar_length = 10
                     filled = int((perc / 100) * bar_length)
-                    bar = "▓" * filled + "░" * (bar_length - filled)
+                    bar = "▰" * filled + "▱" * (bar_length - filled)
+                    
+                    eta_str = get_readable_time(eta) if eta > 0 else "0s"
                     
                     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
                     text = (
-                        f"🎬  {engine_name} \n"
-                        "──────────────────────────\n"
-                        f"📦 " + sc("ғɪʟᴇ   :") + f" `{RENAME}`\n"
+                        f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
+                        "──────────────────────\n"
+                        f"📦 " + sc("ғɪʟᴇ  :") + f" {RENAME}\n\n"
                         f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
-                        f"▸ " + sc("ᴘʀᴏɢʀᴇss:") + f" {bar}  {perc:.2f}%\n"
-                        f"▸ " + sc("sᴘᴇᴇᴅ  :") + f" {speed:.2f}x\n"
-                        f"▸ " + sc("ᴇᴛᴀ    :") + f" ~{get_readable_time(eta)}\n"
-                        "──────────────────────────\n"
+                        f"📊 [{bar}] {perc:.2f}%\n"
+                        f"🚀 Speed: {speed_bps:.2f}x\n"
+                        f"💾 Time: {get_readable_time(cur)} / {get_readable_time(duration)}\n"
+                        f"⏱ ETA: {eta_str}\n"
+                        "──────────────────────\n"
                         "🐍 " + sc("ʙᴏᴀ ʜᴀɴᴄᴏᴄᴋ ᴄʟᴏᴜᴅ ᴇɴɢɪɴᴇ")
                     )
                     try: await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
@@ -235,11 +259,12 @@ async def upload_phase(output, returncode, msg_id):
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
         cap = sc(f"✅ {TASK_TYPE.upper()} Cᴏᴍᴘʟᴇᴛᴇ\n") + f"📦 `{RENAME}`"
         
+        up_start_time = time.time()
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
-                progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ")
+                progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ", RENAME, up_start_time)
             )
             if target_chat != CHAT_ID:
                 await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"))
