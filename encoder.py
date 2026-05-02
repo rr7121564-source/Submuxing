@@ -12,6 +12,9 @@ pyrogram.utils.get_peer_type = patched_get_peer_type
 from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+def sc(text: str) -> str:
+    return text.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz", "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ"))
+
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -67,16 +70,16 @@ async def progress_bar(current, total, app, msg_id, action_text):
             filled = int((perc / 100) * bar_length)
             bar = "▓" * filled + "░" * (bar_length - filled)
             
-            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+            cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
             text = (
-                f"🎬  GITHUB WORKER \n"
+                f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
                 "──────────────────────────\n"
-                f"📦 File     : `{RENAME}`\n"
-                f"▸ Status    : {action_text}\n"
-                f"▸ Progress  : {bar}  {perc:.1f}%\n"
-                f"▸ Size      : {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
+                f"📦 " + sc("ғɪʟᴇ  :") + f" `{RENAME}`\n"
+                f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {sc(action_text)}\n"
+                f"▸ " + sc("ᴘʀᴏɢʀᴇss:") + f" {bar}  {perc:.1f}%\n"
+                f"▸ " + sc("sɪᴢᴇ  :") + f" {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 "──────────────────────────\n"
-                "⚙ Running on Cloud Engine"
+                "🐍 " + sc("ʙᴏᴀ ʜᴀɴᴄᴏᴄᴋ ᴄʟᴏᴜᴅ ᴇɴɢɪɴᴇ")
             )
             await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
             last_edit_time = now
@@ -86,28 +89,28 @@ async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
     
-    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
     
     if STATUS_MSG_ID:
         msg_id = int(STATUS_MSG_ID)
-        try: await app.edit_message_text(CHAT_ID, msg_id, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
         except:
-            status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
             msg_id = status_msg.id
     else:
-        status_msg = await app.send_message(CHAT_ID, f"⚙️ Worker Triggered: Preparing...\n📦 File: `{RENAME}`", reply_markup=cancel_kb)
+        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
         msg_id = status_msg.id
     
-    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Video"))
+    video_path = await app.download_media(VIDEO_ID, file_name="video.mkv", progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ"))
     sub_path = None
     if TASK_TYPE == "hardsub" and SUB_ID != "none":
-        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Subtitle"))
+        sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Sᴜʙᴛɪᴛʟᴇ"))
         
     logo_path = None
     if TASK_TYPE == "hardsub" and LOGO_ID != "none":
-        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "📥 Downloading Logo"))
+        logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Lᴏɢᴏ"))
         
-    await app.edit_message_text(CHAT_ID, msg_id, f"🔥 Starting FFmpeg Engine...\n📦 File: `{RENAME}`\n*(Connection Paused for Safety)*", reply_markup=cancel_kb)
+    await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n") + f"📦 `{RENAME}`", reply_markup=cancel_kb)
     await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
@@ -143,7 +146,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             ] if sub_filter else[
                 'ffmpeg', '-y', '-i', video_path, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
             ]
-        engine_name = "HARDSUB ENGINE"
+        engine_name = "Hᴀʀᴅsᴜʙ Eɴɢɪɴᴇ"
     else:
         if RESOLUTION != "original":
             vf_scale = f"scale=-2:{RESOLUTION}"
@@ -161,7 +164,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
                 '-progress', 'pipe:1', output
             ]
-        engine_name = "COMPRESSION ENGINE"
+        engine_name = "Cᴏᴍᴘʀᴇssɪᴏɴ Eɴɢɪɴᴇ"
 
     app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await app.start()
@@ -191,17 +194,17 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     filled = int((perc / 100) * bar_length)
                     bar = "▓" * filled + "░" * (bar_length - filled)
                     
-                    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_cloud_task_cloud")]])
+                    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
                     text = (
                         f"🎬  {engine_name} \n"
                         "──────────────────────────\n"
-                        f"📦 File     : `{RENAME}`\n"
-                        f"▸ Status    : Processing Frame...\n"
-                        f"▸ Progress  : {bar}  {perc:.2f}%\n"
-                        f"▸ Velocity  : {speed:.2f}x\n"
-                        f"▸ Remaining : ~{get_readable_time(eta)}\n"
+                        f"📦 " + sc("ғɪʟᴇ   :") + f" `{RENAME}`\n"
+                        f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
+                        f"▸ " + sc("ᴘʀᴏɢʀᴇss:") + f" {bar}  {perc:.2f}%\n"
+                        f"▸ " + sc("sᴘᴇᴇᴅ  :") + f" {speed:.2f}x\n"
+                        f"▸ " + sc("ᴇᴛᴀ    :") + f" ~{get_readable_time(eta)}\n"
                         "──────────────────────────\n"
-                        "⚙ GitHub Cloud Worker"
+                        "🐍 " + sc("ʙᴏᴀ ʜᴀɴᴄᴏᴄᴋ ᴄʟᴏᴜᴅ ᴇɴɢɪɴᴇ")
                     )
                     try: await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
                     except: pass
@@ -226,25 +229,25 @@ async def upload_phase(output, returncode, msg_id):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, f"▸ Processing Done! Starting Fresh Upload...\n📦 File: `{RENAME}`")
+        await app.edit_message_text(CHAT_ID, msg_id, sc("▸ Pʀᴏᴄᴇssɪɴɢ Dᴏɴᴇ! Uᴘʟᴏᴀᴅ ᴄʜᴀʟ ʀᴀʜᴀ ʜᴀɪ...\n") + f"📦 `{RENAME}`")
         
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
-        cap = f"✅ {TASK_TYPE.upper()} COMPLETE\n📦 File: `{RENAME}`"
+        cap = sc(f"✅ {TASK_TYPE.upper()} Cᴏᴍᴘʟᴇᴛᴇ\n") + f"📦 `{RENAME}`"
         
         try:
             await app.send_document(
                 chat_id=target_chat, document=output, reply_to_message_id=thread,
                 thumb=thumb_path if has_thumb else None, caption=cap,
-                progress=progress_bar, progress_args=(app, msg_id, "📤 Uploading Video")
+                progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ")
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, f"{cap}\n\nFile successfully sent to your PM / Dump Group!")
+                await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"))
             await app.delete_messages(CHAT_ID, msg_id)
         except Exception as e:
-            await app.edit_message_text(CHAT_ID, msg_id, f"❌ Upload Error: {str(e)}")
+            await app.edit_message_text(CHAT_ID, msg_id, sc(f"❌ Uᴘʟᴏᴀᴅ Eʀʀᴏʀ: {str(e)}"))
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, f"❌ **FFmpeg Error:** Failed to Process Video.")
+        await app.edit_message_text(CHAT_ID, msg_id, sc("❌ FFᴍᴘᴇɢ Eʀʀᴏʀ: Fᴀɪʟᴇᴅ ᴛᴏ ᴘʀᴏᴄᴇss."))
     
     await app.stop()
 
