@@ -5,6 +5,9 @@ import time
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from config import active_processes
 
+def sc(text: str) -> str:
+    return text.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz", "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ"))
+
 def clean_temp_files(path):
     try:
         if os.path.isdir(path): shutil.rmtree(path)
@@ -52,18 +55,18 @@ async def get_media_info(file_path):
         v_stream = next((s for s in streams if s['codec_type'] == 'video'), None)
         a_stream = next((s for s in streams if s['codec_type'] == 'audio'), None)
         
-        res = f"⏱ **Duration:** {get_readable_time(duration)}\n"
-        res += f"💾 **Size:** {size:.2f} MB\n"
-        res += f"⚡ **Bitrate:** {bitrate:.0f} kbps\n\n"
+        res = f"⏱ " + sc("Dᴜʀᴀᴛɪᴏɴ:") + f" {get_readable_time(duration)}\n"
+        res += f"💾 " + sc("Sɪᴢᴇ:") + f" {size:.2f} MB\n"
+        res += f"⚡ " + sc("Bɪᴛʀᴀᴛᴇ:") + f" {bitrate:.0f} kbps\n\n"
         
         if v_stream:
-            res += f"🎬 **Video:** {v_stream.get('codec_name', 'unknown').upper()} | {v_stream.get('width', '?')}x{v_stream.get('height', '?')}\n"
+            res += f"🎬 " + sc("Vɪᴅᴇᴏ:") + f" {v_stream.get('codec_name', 'unknown').upper()} | {v_stream.get('width', '?')}x{v_stream.get('height', '?')}\n"
         if a_stream:
-            res += f"🎵 **Audio:** {a_stream.get('codec_name', 'unknown').upper()} | {a_stream.get('sample_rate', '?')} Hz\n"
+            res += f"🎵 " + sc("Aᴜᴅɪᴏ:") + f" {a_stream.get('codec_name', 'unknown').upper()} | {a_stream.get('sample_rate', '?')} Hz\n"
             
         return res
     except Exception:
-        return "❌ Failed to parse media info."
+        return sc("❌ Fᴀɪʟᴇᴅ ᴛᴏ ᴘᴀʀsᴇ ᴍᴇᴅɪᴀ ɪɴғᴏ.")
 
 async def generate_screenshots(file_path, num_screens, output_folder):
     duration = await get_duration(file_path)
@@ -102,7 +105,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
         '-map', '0:v', '-map', '0:a?', '-map', '1:0',
         '-c:v', 'copy', '-c:a', 'copy', f'-c:s', sub_codec,
         '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
-    ] + font_args + ['-progress', 'pipe:1', output_path]
+    ] + font_args +['-progress', 'pipe:1', output_path]
     
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     
@@ -111,7 +114,7 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
     
     start_time = time.time()
     last_up = 0
-    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{proc_key}_local")]])
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data=f"cancel_{proc_key}_local")]])
 
     while True:
         line = await proc.stdout.readline()
@@ -135,14 +138,14 @@ async def mux_video(mkv_path, sub_path, output_path, chat_id, status_msg, file_n
                     bar = "▓" * filled + "░" * (bar_length - filled)
                     
                     text = (
-                        "🎬 **MUXING IN PROGRESS**\n"
+                        "🎬 " + sc("ᴍᴜxɪɴɢ ɪɴ ᴘʀᴏɢʀᴇss") + "\n"
                         "───────────────────\n"
-                        f"📦 **File:** `{file_name}`\n"
-                        f"📊 **Progress:** {bar} {perc:.1f}%\n"
-                        f"🚀 **Speed:** {speed:.2f}x\n"
-                        f"⏳ **ETA:** {get_readable_time(eta)}\n"
+                        f"📦 " + sc("ғɪʟᴇ:") + f" `{file_name}`\n"
+                        f"📊 " + sc("ᴘʀᴏɢʀᴇss:") + f" {bar} {perc:.1f}%\n"
+                        f"🚀 " + sc("sᴘᴇᴇᴅ:") + f" {speed:.2f}x\n"
+                        f"⏳ " + sc("ᴇᴛᴀ:") + f" {get_readable_time(eta)}\n"
                         "───────────────────\n"
-                        "⚙️ *Engine: FFmpeg Local Engine*"
+                        "🐍 " + sc("ʙᴏᴀ ʜᴀɴᴄᴏᴄᴋ ʟᴏᴄᴀʟ ᴇɴɢɪɴᴇ")
                     )
                     
                     try: await status_msg.edit_text(text, parse_mode="Markdown", reply_markup=cancel_kb)
