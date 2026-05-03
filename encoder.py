@@ -239,7 +239,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     text = (
                         f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + "\n"
                         "──────────────────────\n"
-                        f"📦 " + sc("ғɪʟᴇ  :") + f" {RENAME}\n\n"
                         f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
                         f"📊 [{bar}] {perc:.2f}%\n"
                         f"🚀 Speed: {speed_bps:.2f}x\n"
