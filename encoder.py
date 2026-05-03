@@ -91,7 +91,6 @@ async def progress_bar(current, total, app, msg_id, action_text, current_file_na
             text = (
                 f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + "\n"
                 "──────────────────────\n"
-                f"📦 " + sc("ғɪʟᴇ  :") + f" {current_file_name}\n\n"
                 f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {action_text}\n"
                 f"📊 [{bar}] {perc:.2f}%\n"
                 f"🚀 Speed: {speed/(1024*1024):.2f} MB/s\n"
