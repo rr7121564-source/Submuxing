@@ -13,18 +13,19 @@ from pyrogram import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def sc(text: str) -> str:
+    if not isinstance(text, str): return str(text)
     return text.translate(str.maketrans("abcdefghijklmnopqrstuvwxyz", "ᴀʙᴄᴅᴇғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀsᴛᴜᴠᴡxʏᴢ"))
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-TASK_TYPE = os.getenv("TASK_TYPE")
-VIDEO_ID = os.getenv("VIDEO_ID")
-SUB_ID = os.getenv("SUB_ID")
+TASK_TYPE = os.getenv("TASK_TYPE", "hardsub")
+VIDEO_ID = os.getenv("VIDEO_ID", "")
+SUB_ID = os.getenv("SUB_ID", "none")
 RENAME = os.getenv("RENAME", "output.mp4")
-CHAT_ID = int(os.getenv("CHAT_ID"))
-THREAD_ID = os.getenv("THREAD_ID")
+CHAT_ID = int(os.getenv("CHAT_ID", "0"))
+THREAD_ID = os.getenv("THREAD_ID", "none")
 
 raw_dump = os.getenv("DUMP_ID", "none")
 STATUS_MSG_ID = None
@@ -35,7 +36,8 @@ VIDEO_MSG_ID = None
 if ":::" in raw_dump:
     parts = raw_dump.split(":::")
     DUMP_ID = parts[0]
-    LOGO_ID = parts[1]
+    if len(parts) > 1: LOGO_ID = parts[1]
+    else: LOGO_ID = "none"
     if len(parts) > 2: STATUS_MSG_ID = parts[2]
     if len(parts) > 3: RESOLUTION = parts[3]
     if len(parts) > 4: ORIG_NAME = parts[4]
@@ -46,23 +48,29 @@ else:
 
 last_edit_time = 0
 
-def get_readable_time(seconds: int) -> str:
+def get_readable_time(seconds) -> str:
+    try:
+        seconds = int(float(seconds))
+    except:
+        seconds = 0
     result = ""
     (days, remainder) = divmod(seconds, 86400)
-    if int(days) != 0: result += f"{int(days)}d "
+    if days != 0: result += f"{days}d "
     (hours, remainder) = divmod(remainder, 3600)
-    if int(hours) != 0: result += f"{int(hours)}h "
+    if hours != 0: result += f"{hours}h "
     (minutes, seconds) = divmod(remainder, 60)
-    if int(minutes) != 0: result += f"{int(minutes)}m "
-    result += f"{int(seconds)}s"
+    if minutes != 0: result += f"{minutes}m "
+    result += f"{seconds}s"
     return result.strip()
 
 async def get_duration(file_path):
     cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    stdout, _ = await proc.communicate()
-    try: return float(stdout.decode().strip())
-    except: return 0.0
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        stdout, _ = await proc.communicate()
+        return float(stdout.decode().strip())
+    except:
+        return 0.0
 
 async def progress_bar(current, total, app, msg_id, action_text, current_file_name, start_time):
     global last_edit_time
@@ -77,15 +85,15 @@ async def progress_bar(current, total, app, msg_id, action_text, current_file_na
             elapsed = now - start_time
             speed = current / elapsed if elapsed > 0 else 0
             eta_seconds = (total - current) / speed if speed > 0 else 0
-            
             eta_str = get_readable_time(eta_seconds) if eta_seconds > 0 else "0s"
             
             cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
             text = (
-                f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
+                f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + "\n"
                 "──────────────────────\n"
+                f"📦 " + sc("ғɪʟᴇ  :") + f" {current_file_name}\n\n"
                 f"▸ " + sc("sᴛᴀᴛᴜs :") + f" {action_text}\n"
-                f"📊[{bar}] {perc:.2f}%\n"
+                f"📊 [{bar}] {perc:.2f}%\n"
                 f"🚀 Speed: {speed/(1024*1024):.2f} MB/s\n"
                 f"💾 Size: {current/(1024*1024):.1f} MB / {total/(1024*1024):.1f} MB\n"
                 f"⏱ ETA: {eta_str}\n"
@@ -94,7 +102,8 @@ async def progress_bar(current, total, app, msg_id, action_text, current_file_na
             )
             await app.edit_message_text(CHAT_ID, msg_id, text, reply_markup=cancel_kb)
             last_edit_time = now
-        except: pass
+        except Exception:
+            pass
 
 async def download_phase():
     app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -102,13 +111,22 @@ async def download_phase():
     
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
     
+    msg_id = None
     if STATUS_MSG_ID:
-        msg_id = int(STATUS_MSG_ID)
-        try: await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb)
-        except: pass
-    else:
-        status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb, reply_to_message_id=int(VIDEO_MSG_ID) if VIDEO_MSG_ID and str(VIDEO_MSG_ID) != "None" else None)
-        msg_id = status_msg.id
+        try:
+            msg_id = int(STATUS_MSG_ID)
+            await app.edit_message_text(CHAT_ID, msg_id, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb)
+        except Exception:
+            msg_id = None
+
+    if not msg_id:
+        try:
+            reply_id = int(VIDEO_MSG_ID) if VIDEO_MSG_ID and str(VIDEO_MSG_ID) != "None" else None
+            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb, reply_to_message_id=reply_id)
+            msg_id = status_msg.id
+        except Exception:
+            status_msg = await app.send_message(CHAT_ID, sc("⚙️ Wᴏʀᴋᴇʀ ᴛʀɪɢɢᴇʀᴇᴅ: Pʀᴇᴘᴀʀɪɴɢ...\n"), reply_markup=cancel_kb)
+            msg_id = status_msg.id
     
     dl_start_time = time.time()
     video_path = await app.download_media(
@@ -132,7 +150,11 @@ async def download_phase():
             progress=progress_bar, progress_args=(app, msg_id, "Dᴏᴡɴʟᴏᴀᴅɪɴɢ Lᴏɢᴏ", ORIG_NAME, logo_start_time)
         )
         
-    await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n"), reply_markup=cancel_kb)
+    try:
+        await app.edit_message_text(CHAT_ID, msg_id, sc("🔥 Sᴛᴀʀᴛɪɴɢ FFᴍᴘᴇɢ Eɴɢɪɴᴇ...\n"), reply_markup=cancel_kb)
+    except:
+        pass
+
     await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
@@ -150,7 +172,6 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
             scale_val = "120:-1"
             pos_val = "main_w-overlay_w-15:15"
-            
             filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
             
             cmd =[
@@ -213,13 +234,13 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     bar_length = 10
                     filled = int((perc / 100) * bar_length)
                     bar = "▰" * filled + "▱" * (bar_length - filled)
-                    
                     eta_str = get_readable_time(eta) if eta > 0 else "0s"
                     
                     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
                     text = (
-                        f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + " \n"
+                        f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + "\n"
                         "──────────────────────\n"
+                        f"📦 " + sc("ғɪʟᴇ  :") + f" {RENAME}\n\n"
                         f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
                         f"📊 [{bar}] {perc:.2f}%\n"
                         f"🚀 Speed: {speed_bps:.2f}x\n"
@@ -239,8 +260,11 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
 
 async def extract_thumbnail(video_path, thumb_path):
     cmd =['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    await proc.communicate()
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await proc.communicate()
+    except:
+        pass
     return os.path.exists(thumb_path)
 
 async def upload_phase(output, returncode, msg_id):
@@ -251,15 +275,21 @@ async def upload_phase(output, returncode, msg_id):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
         
-        await app.edit_message_text(CHAT_ID, msg_id, sc("▸ Pʀᴏᴄᴇssɪɴɢ Dᴏɴᴇ! Uᴘʟᴏᴀᴅ ᴄʜᴀʟ ʀᴀʜᴀ ʜᴀɪ...\n"))
-        
+        try:
+            await app.edit_message_text(CHAT_ID, msg_id, sc("▸ Pʀᴏᴄᴇssɪɴɢ Dᴏɴᴇ! Uᴘʟᴏᴀᴅ ᴄʜᴀʟ ʀᴀʜᴀ ʜᴀɪ...\n"))
+        except:
+            pass
+
         target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
         thread = int(THREAD_ID) if THREAD_ID != "none" else None
         cap = sc(f"✅ {TASK_TYPE.upper()} Cᴏᴍᴘʟᴇᴛᴇ\n") + f"📦 `{RENAME}`"
         
         reply_id = thread
         if target_chat == CHAT_ID and VIDEO_MSG_ID and str(VIDEO_MSG_ID) != "None":
-            reply_id = int(VIDEO_MSG_ID)
+            try:
+                reply_id = int(VIDEO_MSG_ID)
+            except:
+                reply_id = None
         
         up_start_time = time.time()
         try:
@@ -269,17 +299,37 @@ async def upload_phase(output, returncode, msg_id):
                 progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ", RENAME, up_start_time)
             )
             if target_chat != CHAT_ID:
-                await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"))
-            await app.delete_messages(CHAT_ID, [msg_id])
+                await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"), reply_to_message_id=reply_id)
+            await app.delete_messages(CHAT_ID,[msg_id])
         except Exception as e:
-            await app.edit_message_text(CHAT_ID, msg_id, sc(f"❌ Uᴘʟᴏᴀᴅ Eʀʀᴏʀ: {str(e)}"))
+            try:
+                # Fallback upload in case reply_to_message_id is invalid/deleted
+                await app.send_document(
+                    chat_id=target_chat, document=output,
+                    thumb=thumb_path if has_thumb else None, caption=cap,
+                    progress=progress_bar, progress_args=(app, msg_id, "Uᴘʟᴏᴀᴅɪɴɢ Vɪᴅᴇᴏ", RENAME, up_start_time)
+                )
+                if target_chat != CHAT_ID:
+                    await app.send_message(CHAT_ID, sc("Kᴀᴀᴍ ʜᴏ ɢᴀʏᴀ! Fɪʟᴇ ᴀᴀᴘᴋᴏ ʙʜᴇᴊ ᴅɪ ɢᴀʏɪ ʜᴀɪ! ❤️"))
+                await app.delete_messages(CHAT_ID, [msg_id])
+            except Exception as inner_e:
+                try:
+                    await app.edit_message_text(CHAT_ID, msg_id, sc(f"❌ Uᴘʟᴏᴀᴅ Eʀʀᴏʀ: {str(inner_e)}"))
+                except:
+                    pass
     else:
-        await app.edit_message_text(CHAT_ID, msg_id, sc("❌ FFᴍᴘᴇɢ Eʀʀᴏʀ: Fᴀɪʟᴇᴅ ᴛᴏ ᴘʀᴏᴄᴇss."))
+        try:
+            await app.edit_message_text(CHAT_ID, msg_id, sc("❌ FFᴍᴘᴇɢ Eʀʀᴏʀ: Fᴀɪʟᴇᴅ ᴛᴏ ᴘʀᴏᴄᴇss."))
+        except:
+            pass
     
     await app.stop()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    vid, sub, logo, mid = loop.run_until_complete(download_phase())
-    out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
-    loop.run_until_complete(upload_phase(out, rcode, mid))
+    try:
+        vid, sub, logo, mid = loop.run_until_complete(download_phase())
+        out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
+        loop.run_until_complete(upload_phase(out, rcode, mid))
+    except Exception as e:
+        print(f"Error during GitHub worker execution: {e}")
