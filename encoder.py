@@ -171,11 +171,16 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
             scale_val = "120:-1"
             pos_val = "main_w-overlay_w-15:15"
-            filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}" if sub_filter else f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}"
+            
+            if sub_filter:
+                filter_complex = f"[1:v]scale={scale_val}[logo];[0:v]{sub_filter}[subbed];[subbed][logo]overlay={pos_val}[outv]"
+            else:
+                filter_complex = f"[1:v]scale={scale_val}[logo];[0:v][logo]overlay={pos_val}[outv]"
             
             cmd =[
                 'ffmpeg', '-y', '-i', video_path, '-i', abs_logo,
                 '-filter_complex', filter_complex,
+                '-map', '[outv]', '-map', '0:a?', '-sn',
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy',
                 '-progress', 'pipe:1', output
             ]
@@ -239,7 +244,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                     text = (
                         f"🎬  " + sc("ɢɪᴛʜᴜʙ ᴄʟᴏᴜᴅ ᴡᴏʀᴋᴇʀ") + "\n"
                         "──────────────────────\n"
-                        f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" ᴘʀᴏᴄᴇssɪɴɢ ғʀᴀᴍᴇs...\n") +
+                        f"▸ " + sc("sᴛᴀᴛᴜs :") + sc(" Eɴᴄᴏᴅɪɴɢ...\n") +
                         f"📊 [{bar}] {perc:.2f}%\n"
                         f"🚀 Speed: {speed_bps:.2f}x\n"
                         f"💾 Time: {get_readable_time(cur)} / {get_readable_time(duration)}\n"
