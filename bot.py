@@ -87,7 +87,7 @@ def _is_github_busy():
         r = requests.get(url, headers=headers)
         if r.status_code == 200:
             for run in r.json().get("workflow_runs",[]):
-                if run.get("status") in ["in_progress", "queued", "requested"]: return True
+                if run.get("status") in["in_progress", "queued", "requested"]: return True
         return False
     except: return False
 
@@ -111,30 +111,6 @@ async def wait_for_github_free(timeout=3600):
             break
         await asyncio.sleep(20)
 
-# --- AUTO RENAME LOGIC ---
-def auto_rename(orig_name, user_id):
-    try:
-        settings = get_user_settings(user_id)
-        fmt = settings.get('rename_format')
-        
-        if not fmt: 
-            return orig_name
-            
-        base_name, ext = os.path.splitext(orig_name)
-        if not ext: ext = '.mkv'
-        ep_match = re.search(r'-\s*(\d+)', base_name)
-        ep = ep_match.group(1) if ep_match else "01"
-        q_match = re.search(r'(1080p|720p|480p|2160p|4k)', base_name, re.IGNORECASE)
-        quality = q_match.group(1).lower() if q_match else "1080p"
-        
-        title_part = base_name.split('-')[0] if '-' in base_name else base_name
-        title_part = re.sub(r'\[.*?\]', '', title_part).strip()
-        full_title = title_part if title_part else "Video"
-        
-        final_name = fmt.replace("{ep}", ep).replace("{short_title}", full_title).replace("{quality}", quality)
-        return final_name + ext
-    except: return orig_name
-
 # --- COMMANDS ---
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -142,13 +118,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = (
             sc("Dᴀʀʟɪɴɢ! Aᴀᴘᴋᴇ ʟɪʏᴇ sᴀᴀʀɪ ᴊᴀɴᴋᴀʀɪ ʜᴀᴢɪʀ ʜᴀɪ 🥰\n\n") +
             "🔹 " + sc("Vɪᴅᴇᴏ ᴀᴜʀ Sᴜʙᴛɪᴛʟᴇ ʙʜᴇᴊᴇɪɴ -> Mᴜx/Hᴀʀᴅsᴜʙ ᴋᴇ ʟɪʏᴇ\n") +
-            "🔹 /autorename - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ sᴇᴛ ᴋᴀʀᴇɪɴ\n") +
+            "🔹 /setformat - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ sᴇᴛ/ᴅᴇᴋʜᴇɪɴ\n") +
             "🔹 /setlogo - " + sc("Iᴍᴀɢᴇ ᴘᴀʀ ʀᴇᴘʟʏ -> Lᴏɢᴏ sᴇᴛ\n") +
             "🔹 /showlogo - " + sc("Lᴏɢᴏ ᴅᴇᴋʜᴇɪɴ\n") +
             "🔹 /setdump - " + sc("Dᴜᴍᴘ ɢʀᴏᴜᴘ ID\n") +
             "🔹 /deldump - " + sc("Dᴜᴍᴘ ɢʀᴏᴜᴘ ʜᴀᴛᴀʏᴇɪɴ\n") +
             "🔹 /showcover - " + sc("Cᴏᴠᴇʀ ᴘɪᴄ ᴅᴇᴋʜᴇɪɴ\n") +
-            "🔹 /showrename - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ ᴅᴇᴋʜᴇɪɴ\n") +
             "🔹 /extract - " + sc("MKV ᴘᴀʀ ʀᴇᴘʟʏ -> Sᴜʙs ɴɪᴋᴀʟᴇɪɴ\n") +
             "🔹 /compress - " + sc("Vɪᴅᴇᴏ ᴘᴀʀ ʀᴇᴘʟʏ -> Cᴏᴍᴘʀᴇss\n") +
             "🔹 /mediainfo - " + sc("Vɪᴅᴇᴏ ᴅᴇᴛᴀɪʟs\n") +
@@ -163,13 +138,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = (
             sc("Mᴇʀɪ ᴛᴀǫᴀᴛ ᴋᴇ ᴀᴀɢᴇ ᴊʜᴜᴋᴏ ᴀᴜʀ ʏᴇ sᴜɴᴏ... 🐍\n\n") +
             "🔹 " + sc("Vɪᴅᴇᴏ ᴀᴜʀ Sᴜʙᴛɪᴛʟᴇ ʙʜᴇᴊᴇɪɴ -> Mᴜx/Hᴀʀᴅsᴜʙ ᴋᴇ ʟɪʏᴇ\n") +
-            "🔹 /autorename - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ\n") +
+            "🔹 /setformat - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ sᴇᴛ/ᴅᴇᴋʜᴇɪɴ\n") +
             "🔹 /setlogo - " + sc("Lᴏɢᴏ ʟᴀɢᴀᴏ\n") +
             "🔹 /showlogo - " + sc("Lᴏɢᴏ ᴅᴇᴋʜᴏ\n") +
             "🔹 /setdump - " + sc("Dᴜᴍᴘ ɢʀᴏᴜᴘ ID\n") +
             "🔹 /deldump - " + sc("Dᴜᴍᴘ ʜᴀᴛᴀᴏ\n") +
             "🔹 /showcover - " + sc("Cᴏᴠᴇʀ ᴅᴇᴋʜᴏ\n") +
-            "🔹 /showrename - " + sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ ᴅᴇᴋʜᴏ\n") +
             "🔹 /extract - " + sc("MKV ᴘᴀʀ ʀᴇᴘʟʏ -> Sᴜʙs\n") +
             "🔹 /compress - " + sc("Vɪᴅᴇᴏ ᴘᴀʀ ʀᴇᴘʟʏ -> Cᴏᴍᴘʀᴇss\n") +
             "🔹 /mediainfo - " + sc("Vɪᴅᴇᴏ ᴅᴇᴛᴀɪʟs\n") +
@@ -436,24 +410,42 @@ async def cmd_showcover(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if await wait_if_rate_limited(e): continue
             break
 
-async def cmd_showrename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_setformat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    settings = get_user_settings(user_id)
-    fmt = settings.get('rename_format')
+    if not context.args:
+        settings = get_user_settings(user_id)
+        fmt = settings.get('rename_format')
+        if fmt:
+            if user_id == OWNER_ID:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("🗑️ Fᴏʀᴍᴀᴛ Hᴀᴛᴀʏᴇɪɴ"), callback_data="remove_rename")]])
+                text = sc("Yᴇ ʀᴀʜᴀ ᴀᴀᴘᴋᴀ ғᴏʀᴍᴀᴛ Dᴀʀʟɪɴɢ:\n") + f"{fmt}"
+            else:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("🗑️ Fᴏʀᴍᴀᴛ Hᴀᴛᴀᴏ"), callback_data="remove_rename")]])
+                text = sc("Yᴇ ᴅᴇᴋʜᴏ ᴀᴘɴᴀ ғᴏʀᴍᴀᴛ:\n") + f"{fmt}"
+        else:
+            default_fmt = "[E{ep}] {short_title} [Hindi - Sub]"
+            if user_id == OWNER_ID:
+                text = sc("Kᴏɪ ᴄᴜsᴛᴏᴍ ғᴏʀᴍᴀᴛ ɴᴀʜɪ ʜᴀɪ. Dᴇғᴀᴜʟᴛ ʏᴇ ʜᴀɪ:\n") + f"{default_fmt}\n\n" + sc("Nᴀʏᴀ sᴇᴛ ᴋᴀʀɴᴇ ᴋᴇ ʟɪʏᴇ:\n") + "/setformat[E{ep}] {short_title}[Hindi - Sub]"
+            else:
+                text = sc("Kᴏɪ ғᴏʀᴍᴀᴛ ɴᴀʜɪ ʜᴀɪ. Dᴇғᴀᴜʟᴛ:\n") + f"{default_fmt}\n\n" + sc("Sᴇᴛ ᴋᴀʀᴏ:\n") + "/setformat [E{ep}] {short_title} [Hindi - Sub]"
+            kb = None
+
+        while True:
+            try:
+                msg = await update.message.reply_text(text, reply_markup=kb)
+                break
+            except Exception as e:
+                if await wait_if_rate_limited(e): continue
+                raise e
+        return
+        
+    format_str = " ".join(context.args)
+    update_user_setting(user_id, "rename_format", format_str)
     
     while True:
         try:
-            if fmt:
-                if user_id == OWNER_ID:
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("🗑️ Fᴏʀᴍᴀᴛ Hᴀᴛᴀʏᴇɪɴ"), callback_data="remove_rename")]])
-                    text = sc("Yᴇ ʀᴀʜᴀ ғᴏʀᴍᴀᴛ Dᴀʀʟɪɴɢ:\n") + f"{fmt}"
-                else:
-                    kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("🗑️ Fᴏʀᴍᴀᴛ Hᴀᴛᴀᴏ"), callback_data="remove_rename")]])
-                    text = sc("Yᴇ ᴅᴇᴋʜᴏ ᴀᴘɴᴀ ғᴏʀᴍᴀᴛ:\n") + f"{fmt}"
-                await update.message.reply_text(text, reply_markup=kb)
-            else:
-                if user_id == OWNER_ID: await update.message.reply_text(sc("Kᴏɪ ғᴏʀᴍᴀᴛ ɴᴀʜɪ ʜᴀɪ Dᴀʀʟɪɴɢ 🥺"))
-                else: await update.message.reply_text(sc("Fᴏʀᴍᴀᴛ ɴᴀʜɪ sᴇᴛ ᴋɪʏᴀ ᴛᴜᴍɴᴇ! 😡"))
+            if user_id == OWNER_ID: msg = await update.message.reply_text(sc("Jɪ Dᴀʀʟɪɴɢ! Fᴏʀᴍᴀᴛ sᴇᴛ ʜᴏ ɢᴀʏᴀ 🥰"))
+            else: msg = await update.message.reply_text(sc("Fᴏʀᴍᴀᴛ sᴀᴠᴇ ʜᴏ ɢᴀʏᴀ! 💅"))
             break
         except Exception as e:
             if await wait_if_rate_limited(e): continue
@@ -474,7 +466,7 @@ async def cmd_setdump(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     while True:
         try:
-            if user_id == OWNER_ID: await update.message.reply_text(sc("Jɪ! Dᴜᴍᴘ ɢʀᴏᴜᴘ sᴇᴛ ʜᴏ ɢᴀʏᴀ ❤️"))
+            if user_id == OWNER_ID: await update.message.reply_text(sc("Jɪ! Dᴜᴍᴘ ɢʀᴏᴜ sᴇᴛ ʜᴏ ɢᴀʏᴀ ❤️"))
             else: await update.message.reply_text(sc("Dᴜᴍᴘ sᴇᴛ ʜᴏ ɢᴀʏᴀ, ᴇʜsᴀᴀɴ ᴍᴀɴᴏ! 👑"))
             break
         except Exception as e:
@@ -541,37 +533,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             if await wait_if_rate_limited(e): continue
             break
-
-async def cmd_autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not context.args:
-        while True:
-            try:
-                if user_id == OWNER_ID: msg = await update.message.reply_text(sc("Dᴀʀʟɪɴɢ, ғᴏʀᴍᴀᴛ ʙᴀᴛᴀɪʏᴇ... 🥺 /autorename[S01 E{ep}] {short_title}"))
-                else: msg = await update.message.reply_text(sc("Bᴇᴡᴀᴋᴏᴏғ! Fᴏʀᴍᴀᴛ ᴋᴏɴ ᴅᴇɢᴀ? 🐍 /autorename[S01 E{ep}] {short_title}"))
-                break
-            except Exception as e:
-                if await wait_if_rate_limited(e): continue
-                raise e
-                
-        asyncio.create_task(delete_after(update.message, 0))
-        asyncio.create_task(delete_after(msg, 5))
-        return
-        
-    format_str = " ".join(context.args)
-    update_user_setting(user_id, "rename_format", format_str)
-    
-    while True:
-        try:
-            if user_id == OWNER_ID: msg = await update.message.reply_text(sc("Jɪ Dᴀʀʟɪɴɢ! Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ sᴇᴛ ʜᴏ ɢᴀʏᴀ 🥰"))
-            else: msg = await update.message.reply_text(sc("Fᴏʀᴍᴀᴛ sᴀᴠᴇ ʜᴏ ɢᴀʏᴀ! 💅"))
-            break
-        except Exception as e:
-            if await wait_if_rate_limited(e): continue
-            break
-        
-    asyncio.create_task(delete_after(update.message, 0))
-    asyncio.create_task(delete_after(msg, 5))
 
 async def cmd_setlogo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -642,8 +603,8 @@ async def settings_remove_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except: pass
         while True:
             try:
-                if user_id == OWNER_ID: msg = await context.bot.send_message(chat_id=query.message.chat_id, text=sc("Rᴇɴᴀᴍᴇ ғᴏʀᴍᴀᴛ ʀᴇsᴇᴛ ᴋᴀʀ ᴅɪʏᴀ 🌸"))
-                else: msg = await context.bot.send_message(chat_id=query.message.chat_id, text=sc("Fᴏʀᴍᴀᴛ ʜᴀᴛ ɢᴀʏᴀ! 💅"))
+                if user_id == OWNER_ID: msg = await context.bot.send_message(chat_id=query.message.chat_id, text=sc("Fᴏʀᴍᴀᴛ ʜᴀᴛᴀ ᴅɪʏᴀ, ᴀʙ ᴅᴇғᴀᴜʟᴛ ᴜsᴇ ʜᴏɢᴀ 🌸"))
+                else: msg = await context.bot.send_message(chat_id=query.message.chat_id, text=sc("Fᴏʀᴍᴀᴛ ʜᴀᴛ ɢᴀʏᴀ, ᴅᴇғᴀᴜʟᴛ sᴇᴛ! 💅"))
                 break
             except Exception as e:
                 if await wait_if_rate_limited(e): continue
@@ -732,7 +693,7 @@ async def cmd_compress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['video_msg_id'] = msg.reply_to_message.message_id
     context.user_data['to_delete'] =[msg.message_id]
     
-    final_name = auto_rename(file_name, user_id)
+    final_name = file_name
     await process_dispatch(update, context, final_name, mode="compress")
 
 def get_lang_name(code): return LANG_MAP.get(code.lower(), code.title())
@@ -927,7 +888,11 @@ async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def block_duplicates(update, context):
     if not update.effective_message: return
-    key = f"{update.effective_message.chat_id}_{update.effective_message.message_id}"
+    # Callback query aane par data bhi attach kar dete hain taaki alag button par block na ho
+    if update.callback_query:
+        key = f"{update.effective_message.chat_id}_{update.effective_message.message_id}_{update.callback_query.data}"
+    else:
+        key = f"{update.effective_message.chat_id}_{update.effective_message.message_id}"
     if not add_processed_id(key): raise ApplicationHandlerStop()
 
 async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -940,7 +905,7 @@ async def handle_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'to_delete' not in context.user_data: context.user_data['to_delete'] =[]
     context.user_data['to_delete'].append(update.message.message_id)
     
-    if ext in ['.mkv', '.mp4']:
+    if ext in['.mkv', '.mp4']:
         context.user_data['mkv_id'] = doc.file_id
         context.user_data['orig_name'] = file_name
         context.user_data['video_msg_id'] = update.message.message_id
@@ -1010,8 +975,8 @@ async def mode_selection_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pending_mode'] = mode
     context.user_data['waiting_for_name'] = True
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("⏭️ Sᴋɪᴘ (Aᴜᴛᴏ Rᴇɴᴀᴍᴇ)"), callback_data="rename_skip")]])
-    text = sc("Nᴀʏᴀ ɴᴀᴀᴍ ʙᴀᴛᴀɪʏᴇ ʏᴀ sɪʀғ Eᴘɪsᴏᴅᴇ Nᴜᴍʙᴇʀ ʟɪᴋʜᴇɪɴ (ᴇ.ɢ. 2). Sᴋɪᴘ ᴋᴀʀɴᴇ ᴘᴀʀ Aᴜᴛᴏ-ʀᴇɴᴀᴍᴇ ʜᴏɢᴀ 🥰") if user_id == OWNER_ID else sc("Nᴀᴀᴍ ʏᴀ Eᴘɪsᴏᴅᴇ Nᴜᴍʙᴇʀ (ᴊᴀɪsᴇ 2) ʙʜᴇᴊᴏ. Yᴀ Sᴋɪᴘ ᴋᴀʀᴏ 💅")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("⏭️ Sᴋɪᴘ (Oʀɪɢɪɴᴀʟ Nᴀᴍᴇ)"), callback_data="rename_skip")]])
+    text = sc("Nᴀʏᴀ ɴᴀᴀᴍ ʙᴀᴛᴀɪʏᴇ ʏᴀ sɪʀғ Eᴘɪsᴏᴅᴇ Nᴜᴍʙᴇʀ ʟɪᴋʜᴇɪɴ (ᴇ.ɢ. 2). Sᴋɪᴘ ᴋᴀʀɴᴇ ᴘᴀʀ Oʀɪɢɪɴᴀʟ Nᴀᴍᴇ ʜᴏɢᴀ 🥰") if user_id == OWNER_ID else sc("Nᴀᴀᴍ ʏᴀ Eᴘɪsᴏᴅᴇ Nᴜᴍʙᴇʀ (ᴊᴀɪsᴇ 2) ʙʜᴇᴊᴏ. Yᴀ Sᴋɪᴘ ᴋᴀʀᴏ 💅")
     
     while True:
         try:
@@ -1034,12 +999,18 @@ async def handle_custom_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     base_name, ext = os.path.splitext(orig)
     
     if text.isdigit():
+        settings = get_user_settings(user_id)
+        fmt = settings.get('rename_format')
         ep_num = f"{int(text):02d}"
         clean_base = re.sub(r'\[.*?\]', '', base_name).strip()
         left_part = clean_base.split('-')[0].strip()
         words = left_part.split()
-        four_words = " ".join(words[:4])
-        final_base = f"[E{ep_num}] {four_words} [Hindi - Sub]"
+        short_title = " ".join(words[:4])
+        
+        if fmt:
+            final_base = fmt.replace("{ep}", ep_num).replace("{short_title}", short_title)
+        else:
+            final_base = f"[E{ep_num}] {short_title} [Hindi - Sub]"
     else:
         final_base = text
         
@@ -1068,7 +1039,7 @@ async def rename_skip_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_name'] = False
     
     mode = context.user_data.get('pending_mode', 'mux')
-    final_name = auto_rename(context.user_data.get('orig_name', 'video.mkv'), user_id)
+    final_name = context.user_data.get('orig_name', 'video.mkv')
     
     base_name, _ = os.path.splitext(final_name)
     if mode == "hardsub": final_name = f"{base_name}.mp4"
@@ -1412,16 +1383,15 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help, block=False))
     app.add_handler(CommandHandler("auth", cmd_auth, block=False))
     app.add_handler(CommandHandler("unauth", cmd_unauth, block=False))
-    app.add_handler(CommandHandler("autorename", cmd_autorename, block=False))
+    app.add_handler(CommandHandler("setformat", cmd_setformat, block=False))
     app.add_handler(CommandHandler("setlogo", cmd_setlogo, block=False))
     app.add_handler(CommandHandler("showlogo", cmd_showlogo, block=False))
     app.add_handler(CommandHandler("extract", cmd_extract, block=False))
     app.add_handler(CommandHandler("compress", cmd_compress, block=False))
     app.add_handler(CommandHandler("mediainfo", cmd_mediainfo, block=False))
-    app.add_handler(CommandHandler("screens", cmd_screens, block=False))
+    app.add_handler(CommandHandler("pics", cmd_screens, block=False))
     app.add_handler(CommandHandler("queue", cmd_queue, block=False))
     app.add_handler(CommandHandler("showcover", cmd_showcover, block=False))
-    app.add_handler(CommandHandler("showrename", cmd_showrename, block=False))
     app.add_handler(CommandHandler("setdump", cmd_setdump, block=False))
     app.add_handler(CommandHandler("deldump", cmd_deldump, block=False))
     app.add_handler(CommandHandler("clear", cmd_clear, block=False))
