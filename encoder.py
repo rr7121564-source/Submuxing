@@ -83,7 +83,7 @@ def get_readable_time(seconds) -> str:
 async def get_duration(file_path):
     cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     try:
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         stdout, _ = await proc.communicate()
         return float(stdout.decode().strip())
     except:
@@ -121,10 +121,7 @@ async def progress_bar(current, total, app, msg_id, action_text, current_file_na
         except Exception:
             pass
 
-async def download_phase():
-    app = Client("worker_down", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
+async def download_phase(app):
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton(sc("❌ Cᴀɴᴄᴇʟ"), callback_data="cancel_cloud_task_cloud")]])
     
     msg_id = None
@@ -178,10 +175,9 @@ async def download_phase():
     except:
         pass
 
-    await app.stop() 
     return video_path, sub_path, logo_path, msg_id
 
-async def encode_phase(video_path, sub_path, logo_path, msg_id):
+async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
     output = RENAME
     duration = await get_duration(video_path)
     os.makedirs("fonts", exist_ok=True)
@@ -219,7 +215,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
     else:
         # hardsub mode
         target_h = res_map.get(RESOLUTION, None) if RESOLUTION != "original" else None
-        filter_complex = []
+        filter_complex =[]
         current_v = "[0:v]"
 
         if target_h:
@@ -242,7 +238,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             s = float(SIZE) / 100
             m = float(MARGIN) / 100
 
-            filter_complex.append(f"[1:v]{current_v}scale2ref=w='iw*{s}':h='ow/dar'[logo][main]")
+            filter_complex.append(f"[1:v]{current_v}scale2ref=w='iw*{s}':h='ow*ih/iw'[logo][main]")
 
             if POS == "Top Left": overlay = f"x=W*{m}:y=H*{m}"
             elif POS == "Top Right": overlay = f"x=W-w-(W*{m}):y=H*{m}"
@@ -265,10 +261,7 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
 
         cmd.extend(['-sn', '-c:v', CODEC, '-preset', PRESET, '-crf', CRF, '-c:a', 'copy', '-progress', 'pipe:1', output])
 
-    app = Client("worker_enc", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     start_time = time.time()
     last_up = 0
 
@@ -312,22 +305,18 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
             except: pass
             
     await proc.wait()
-    await app.stop()
     return output, proc.returncode
 
 async def extract_thumbnail(video_path, thumb_path):
     cmd =['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     try:
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
     except:
         pass
     return os.path.exists(thumb_path)
 
-async def upload_phase(output, returncode, msg_id):
-    app = Client("worker_up", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    await app.start()
-    
+async def upload_phase(app, output, returncode, msg_id):
     if returncode == 0 and os.path.exists(output):
         thumb_path = "thumb.jpg"
         has_thumb = await extract_thumbnail(output, thumb_path)
@@ -378,14 +367,19 @@ async def upload_phase(output, returncode, msg_id):
             await app.edit_message_text(CHAT_ID, msg_id, sc("❌ FFᴍᴘᴇɢ Eʀʀᴏʀ: Fᴀɪʟᴇᴅ ᴛᴏ ᴘʀᴏᴄᴇss."))
         except:
             pass
-    
-    await app.stop()
+
+async def main():
+    app = Client("worker_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    await app.start()
+    try:
+        vid, sub, logo, mid = await download_phase(app)
+        out, rcode = await encode_phase(app, vid, sub, logo, mid)
+        await upload_phase(app, out, rcode, mid)
+    except Exception as e:
+        print(f"Error during GitHub worker execution: {e}")
+    finally:
+        await app.stop()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    try:
-        vid, sub, logo, mid = loop.run_until_complete(download_phase())
-        out, rcode = loop.run_until_complete(encode_phase(vid, sub, logo, mid))
-        loop.run_until_complete(upload_phase(out, rcode, mid))
-    except Exception as e:
-        print(f"Error during GitHub worker execution: {e}")
+    loop.run_until_complete(main())
