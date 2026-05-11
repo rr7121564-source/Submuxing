@@ -181,17 +181,17 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                 'ffmpeg', '-y', '-i', video_path, '-i', abs_logo,
                 '-filter_complex', filter_complex,
                 '-map', '[outv]', '-map', '0:a?', '-sn',
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-c:a', 'copy',
                 '-progress', 'pipe:1', output
             ]
         else:
             cmd =[
                 'ffmpeg', '-y', '-i', video_path, '-sn', 
                 '-vf', sub_filter, 
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-c:a', 'copy',
                 '-progress', 'pipe:1', output
             ] if sub_filter else[
-                'ffmpeg', '-y', '-i', video_path, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-progress', 'pipe:1', output
+                'ffmpeg', '-y', '-i', video_path, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-c:a', 'copy', '-progress', 'pipe:1', output
             ]
     else:
         if RESOLUTION != "original":
@@ -200,14 +200,14 @@ async def encode_phase(video_path, sub_path, logo_path, msg_id):
                 'ffmpeg', '-y', '-i', video_path, 
                 '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
                 '-vf', vf_scale,
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-c:a', 'copy', '-c:s', 'copy',
                 '-progress', 'pipe:1', output
             ]
         else:
             cmd =[
                 'ffmpeg', '-y', '-i', video_path, 
                 '-map', '0:v', '-map', '0:a?', '-map', '0:s?', 
-                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '34', '-c:a', 'copy', '-c:s', 'copy',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-c:a', 'copy', '-c:s', 'copy',
                 '-progress', 'pipe:1', output
             ]
 
