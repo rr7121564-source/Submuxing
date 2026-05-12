@@ -221,8 +221,20 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
 
         if logo_path and LOGO_ID != "none":
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
-            filter_complex.append(f"[1:v]{current_v}scale2ref=w='iw*0.1':h='ow*ih/iw'[logo][main]")
-            filter_complex.append(f"[main][logo]overlay=main_w-overlay_w-15:15[outv]")
+            filter_complex.append(
+    f"[1:v]{current_v}scale2ref="
+    f"w='main_w*0.10':"
+    f"h='ow/mdar':"
+    f"force_original_aspect_ratio=decrease"
+    f"[logo][main]"
+)
+
+filter_complex.append(
+    f"[main][logo]overlay="
+    f"x=main_w-overlay_w-15:"
+    f"y=15"
+    f"[outv]"
+)
             current_v = "[outv]"
 
         cmd =['ffmpeg', '-y', '-i', video_path]
