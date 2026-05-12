@@ -194,10 +194,10 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
         sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
 
         cmd =[
-            'ffmpeg', '-y', '-fflags', '+genpts', '-i', video_path, '-i', sub_path,
+            'ffmpeg', '-y', '-ignore_editlist', '1', '-fflags', '+genpts', '-i', video_path, '-i', sub_path,
             '-map', '0:v', '-map', '0:a?', '-map', '1:0',
             '-c:v', 'copy', '-c:a', 'copy', '-c:s', sub_codec,
-            '-avoid_negative_ts', 'make_zero',
+            '-avoid_negative_ts', 'make_non_negative', '-map_metadata', '-1',
             '-max_muxing_queue_size', '1024',
             '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
         ] + font_args +['-progress', 'pipe:1', output]
