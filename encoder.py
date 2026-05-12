@@ -149,7 +149,7 @@ async def download_phase(app):
         sub_path = await app.download_media(SUB_ID, progress=progress_bar, progress_args=(app, msg_id, "Downloading Subtitle", ORIG_NAME, sub_start_time))
         
     logo_path = None
-    if WM_TYPE == "image" and LOGO_ID != "none":
+    if TASK_TYPE == "hardsub" and WM_TYPE == "image" and LOGO_ID != "none":
         logo_start_time = time.time()
         logo_path = await app.download_media(LOGO_ID, progress=progress_bar, progress_args=(app, msg_id, "Downloading Logo", ORIG_NAME, logo_start_time))
 
@@ -173,7 +173,7 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
     res_list = RESOLUTION.split(",") if RESOLUTION else ["original"]
     base_name, ext = os.path.splitext(RENAME)
     
-    has_image_wm = (WM_TYPE == 'image' and logo_path and LOGO_ID != "none")
+    has_image_wm = (TASK_TYPE == "hardsub" and WM_TYPE == 'image' and logo_path and LOGO_ID != "none")
     target_wm_h = int((vid_h * WM_SIZE) / 100) if WM_SIZE else int((vid_h * 10) / 100)
 
     font_args =[]
@@ -316,7 +316,6 @@ async def upload_phase(app, outputs, returncode, msg_id):
             target_chat = int(DUMP_ID) if DUMP_ID != "none" else CHAT_ID
             thread = int(THREAD_ID) if THREAD_ID != "none" else None
             
-            # Identify quality from filename
             quality = "ORIGINAL"
             for q in ["1080p", "720p", "480p", "360p"]:
                 if q in out: quality = q; break
