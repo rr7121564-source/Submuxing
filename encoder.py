@@ -182,9 +182,8 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
         ])
 
     elif TASK_TYPE == "mux":
-        out_ext = os.path.splitext(output)[1].lower()
         font_args =[]
-        if os.path.exists("fonts") and out_ext == '.mkv':
+        if os.path.exists("fonts"):
             for idx, f in enumerate(os.listdir("fonts")):
                 fp = os.path.join("fonts", f)
                 if not os.path.isfile(fp): continue
@@ -192,15 +191,13 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
                 mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
                 if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
         
-        if out_ext == '.mp4':
-            sub_codec = 'mov_text'
-        else:
-            sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
+        sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
 
         cmd =[
             'ffmpeg', '-fflags', '+genpts', '-y', '-i', video_path, '-i', sub_path,
             '-map', '0:v', '-map', '0:a?', '-map', '1:0',
             '-c:v', 'copy', '-c:a', 'copy', '-c:s', sub_codec,
+            '-avoid_negative_ts', 'make_zero',
             '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
         ] + font_args +['-progress', 'pipe:1', output]
 
