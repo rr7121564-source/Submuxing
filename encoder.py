@@ -182,8 +182,9 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
         ])
 
     elif TASK_TYPE == "mux":
+        out_ext = os.path.splitext(output)[1].lower()
         font_args =[]
-        if os.path.exists("fonts"):
+        if os.path.exists("fonts") and out_ext == '.mkv':
             for idx, f in enumerate(os.listdir("fonts")):
                 fp = os.path.join("fonts", f)
                 if not os.path.isfile(fp): continue
@@ -191,12 +192,15 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
                 mtype = "application/x-truetype-font" if ext in['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
                 if mtype: font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
         
-        sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
+        if out_ext == '.mp4':
+            sub_codec = 'mov_text'
+        else:
+            sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
+
         cmd =[
-            'ffmpeg', '-y', '-i', video_path, '-i', sub_path,
+            'ffmpeg', '-fflags', '+genpts', '-y', '-i', video_path, '-i', sub_path,
             '-map', '0:v', '-map', '0:a?', '-map', '1:0',
             '-c:v', 'copy', '-c:a', 'copy', '-c:s', sub_codec,
-            '-avoid_negative_ts', 'make_zero',
             '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
         ] + font_args +['-progress', 'pipe:1', output]
 
@@ -222,8 +226,8 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
 
         if logo_path and LOGO_ID != "none":
             abs_logo = os.path.abspath(logo_path).replace('\\', '/').replace(':', '\\:')
-            filter_complex.append(f"[1:v]{current_v}scale2ref=w='iw*0.1':h='ow/a'[logo][main]")
-            filter_complex.append(f"[main][logo]overlay=main_w-overlay_w-15:15[outv]")
+            filter_complex.append(f"[1:v]scale=iw*75/ih:75[logo]")
+            filter_complex.append(f"{current_v}[logo]overlay=W-w-10:10[outv]")
             current_v = "[outv]"
 
         cmd =['ffmpeg', '-y', '-i', video_path]
