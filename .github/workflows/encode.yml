@@ -4,36 +4,52 @@ on:
   workflow_dispatch:
     inputs:
       task_type:
+        description: 'Task Type'
         required: true
+        type: string
       video_id:
+        description: 'Video ID'
         required: true
+        type: string
       sub_id:
+        description: 'Subtitle ID'
         required: true
+        type: string
       rename:
+        description: 'New file name'
         required: true
+        type: string
       chat_id:
+        description: 'Target Chat ID'
         required: true
+        type: string
       dump_id:
+        description: 'Dump Channel/Chat ID'
         required: true
+        type: string
       thread_id:
+        description: 'Target Thread ID'
         required: true
+        type: string
 
 jobs:
   encode:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
           pip install pyrogram tgcrypto
 
       - name: Run Worker
@@ -41,12 +57,11 @@ jobs:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          TASK_TYPE: ${{ github.event.inputs.task_type }}
-          VIDEO_ID: ${{ github.event.inputs.video_id }}
-          SUB_ID: ${{ github.event.inputs.sub_id }}
-          RENAME: ${{ github.event.inputs.rename }}
-          CHAT_ID: ${{ github.event.inputs.chat_id }}
-          DUMP_ID: ${{ github.event.inputs.dump_id }}
-          THREAD_ID: ${{ github.event.inputs.thread_id }}
+          TASK_TYPE: ${{ inputs.task_type }}
+          VIDEO_ID: ${{ inputs.video_id }}
+          SUB_ID: ${{ inputs.sub_id }}
+          RENAME: ${{ inputs.rename }}
+          CHAT_ID: ${{ inputs.chat_id }}
+          DUMP_ID: ${{ inputs.dump_id }}
+          THREAD_ID: ${{ inputs.thread_id }}
         run: python encoder.py
-
