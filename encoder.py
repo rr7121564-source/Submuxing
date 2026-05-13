@@ -135,7 +135,7 @@ async def download_phase(app):
     )
     
     sub_path = None
-    if TASK_TYPE == "hardsub" and SUB_ID != "none":
+    if TASK_TYPE in ["hardsub", "mux"] and SUB_ID != "none":
         sub_start_time = time.time()
         sub_path = await app.download_media(
             SUB_ID, 
@@ -280,7 +280,7 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
         else:
             cmd.extend(['-map', '0:v', '-map', '0:a?'])
 
-        cmd.extend(['-sn', '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF, '-c:a', 'copy', '-progress', 'pipe:1', output])
+        cmd.extend(['-sn', '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF, '-c:a', 'aac', '-progress', 'pipe:1', output])
 
     proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     start_time = time.time()
