@@ -1,6 +1,5 @@
 import os, sys, time, asyncio
 import pyrogram.utils
-import shutil
 
 def patched_get_peer_type(peer_id: int) -> str:
     val = str(peer_id)
@@ -69,7 +68,7 @@ def get_readable_time(seconds) -> str:
     return result.strip()
 
 async def get_duration(file_path):
-    cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
+    cmd =['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         stdout, _ = await proc.communicate()
@@ -136,7 +135,7 @@ async def download_phase(app):
     )
     
     sub_path = None
-    if TASK_TYPE in ["hardsub", "mux"] and SUB_ID != "none":
+    if TASK_TYPE == "hardsub" and SUB_ID != "none":
         sub_start_time = time.time()
         sub_path = await app.download_media(
             SUB_ID, 
@@ -166,64 +165,96 @@ async def download_phase(app):
     return video_path, sub_path, logo_path, msg_id
 
 async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
-    # SAFE RENAMING logic to prevent special characters breaking FFmpeg filters
-    if video_path and os.path.exists(video_path):
-        safe_video = "safe_video" + os.path.splitext(video_path)[1]
-        shutil.move(video_path, safe_video)
-        video_path = safe_video
-        
-    if sub_path and os.path.exists(sub_path):
-        safe_sub = "safe_subtitle" + os.path.splitext(sub_path)[1]
-        shutil.move(sub_path, safe_sub)
-        sub_path = safe_sub
-        
-    if logo_path and os.path.exists(logo_path):
-        safe_logo = "safe_logo" + os.path.splitext(logo_path)[1]
-        shutil.move(logo_path, safe_logo)
-        logo_path = safe_logo
-
     output = RENAME
     duration = await get_duration(video_path)
     os.makedirs("fonts", exist_ok=True)
+    
+    if sub_path and os.path.exists(sub_path):
+        safe_sub = f"safe_sub{os.path.splitext(sub_path)[1]}"
+        os.rename(sub_path, safe_sub)
+        sub_path = safe_sub
+        
+    if logo_path and LOGO_ID != "none" and os.path.exists(logo_path):
+        safe_logo = f"safe_logo{os.path.splitext(logo_path)[1]}"
+        os.rename(logo_path, safe_logo)
+        logo_path = safe_logo
     
     res_map = {"1080p": 1080, "720p": 720, "480p": 480}
     
     if TASK_TYPE == "compress":
         target_h = res_map.get(RESOLUTION, None) if RESOLUTION != "original" else None
-        cmd = ['ffmpeg', '-y', '-i', video_path, '-map', '0:v', '-map', '0:a?', '-map', '0:s?']
+        cmd =['ffmpeg', '-y', '-i', video_path, '-map', '0:v', '-map', '0:a?', '-map', '0:s?']
         if target_h:
             cmd.extend(['-vf', f'scale=-2:{target_h}'])
         cmd.extend([
             '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF, '-c:a', 'copy', '-c:s', 'copy',
-            '-max_muxing_queue_size', '4096', '-progress', 'pipe:1', output
+            '-progress', 'pipe:1', output
         ])
 
     elif TASK_TYPE == "mux":
         font_args =[]
+
         if os.path.exists("fonts"):
             for idx, f in enumerate(os.listdir("fonts")):
                 fp = os.path.join("fonts", f)
+
                 if not os.path.isfile(fp):
                     continue
-                ext = os.path.splitext(f)[1].lower()
-                mtype = "application/x-truetype-font" if ext in ['.ttf', '.ttc'] else "application/vnd.ms-opentype" if ext == '.otf' else ""
-                if mtype:
-                    font_args.extend(["-attach", fp, f"-metadata:s:t:{idx}", f"mimetype={mtype}"])
 
-        sub_codec = 'ass' if (sub_path and sub_path.lower().endswith('.ass')) else 'subrip'
-        
+                ext = os.path.splitext(f)[1].lower()
+
+                if ext in ['.ttf', '.ttc']:
+                    mtype = "application/x-truetype-font"
+                elif ext == '.otf':
+                    mtype = "application/vnd.ms-opentype"
+                else:
+                    continue
+
+                font_args.extend([
+                    "-attach", fp,
+                    f"-metadata:s:t:{idx}",
+                    f"mimetype={mtype}"
+                ])
+
+        sub_codec = (
+            'ass'
+            if sub_path and sub_path.lower().endswith('.ass')
+            else 'subrip'
+        )
+
         cmd =[
-            'ffmpeg', '-y', '-fflags', '+genpts',
-            '-i', video_path, '-i', sub_path,
-            '-map', '0:v:0', '-map', '0:a?', '-map', '1:0',
-            '-c:v', 'copy', '-c:a', 'copy', '-c:s', sub_codec,
-            '-map_metadata', '-1', '-avoid_negative_ts', 'make_zero', '-reset_timestamps', '1',
+            'ffmpeg',
+            '-y',
+
+            '-fflags', '+genpts',
+
+            '-i', video_path,
+            '-i', sub_path,
+
+            '-map', '0:v:0',
+            '-map', '0:a?',
+            '-map', '1:0',
+
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            '-c:s', sub_codec,
+
+            '-map_metadata', '-1',
+
+            '-avoid_negative_ts', 'make_zero',
+            '-reset_timestamps', '1',
+
             '-max_muxing_queue_size', '4096',
-            '-disposition:s:0', 'default', '-metadata:s:s:0', 'language=eng', '-metadata:s:s:0', 'title=Hinglish'
-        ] + font_args + ['-progress', 'pipe:1', output]
+
+            '-disposition:s:0', 'default',
+            '-metadata:s:s:0', 'language=eng',
+            '-metadata:s:s:0', 'title=Hinglish'
+        ] + font_args + [
+            '-progress', 'pipe:1',
+            output
+        ]
 
     else:
-        # HARDSUB LOGIC
         target_h = res_map.get(RESOLUTION, None) if RESOLUTION != "original" else None
         filter_complex =[]
         current_v = "[0:v]"
@@ -249,7 +280,7 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
             filter_complex.append(f"[vid][logo]overlay=W-w-10:10[outv]")
             current_v = "[outv]"
 
-        cmd = ['ffmpeg', '-y', '-i', video_path]
+        cmd =['ffmpeg', '-y', '-i', video_path]
         if logo_path and LOGO_ID != "none":
             cmd.extend(['-i', abs_logo])
 
@@ -259,11 +290,7 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
         else:
             cmd.extend(['-map', '0:v', '-map', '0:a?'])
 
-        # Audio AAC ensures no MP4 copy crash
-        cmd.extend([
-            '-sn', '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF, '-c:a', 'aac', 
-            '-max_muxing_queue_size', '4096', '-progress', 'pipe:1', output
-        ])
+        cmd.extend(['-sn', '-c:v', 'libx264', '-preset', PRESET, '-crf', CRF, '-c:a', 'aac', '-progress', 'pipe:1', output])
 
     proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     start_time = time.time()
@@ -312,7 +339,7 @@ async def encode_phase(app, video_path, sub_path, logo_path, msg_id):
     return output, proc.returncode
 
 async def extract_thumbnail(video_path, thumb_path):
-    cmd = ['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
+    cmd =['ffmpeg', '-y', '-ss', '00:00:05', '-i', video_path, '-vf', 'scale=320:-1', '-vframes', '1', thumb_path]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
