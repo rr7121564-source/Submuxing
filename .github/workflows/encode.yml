@@ -1,4 +1,4 @@
-name: CI Build and Test
+name: Video Encoding Worker
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
         required: true
 
 jobs:
-  run-tests:
+  encode:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -32,16 +32,15 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt update -qq > /dev/null 2>&1
-          sudo apt install -y ffmpeg -qq > /dev/null 2>&1
-          pip install pyrogram tgcrypto -q > /dev/null 2>&1
+          sudo apt update
+          sudo apt install -y ffmpeg
+          pip install pyrogram tgcrypto
 
-      - name: Run CI Tests
+      - name: Run Worker
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          TEST_PAYLOAD: ${{ secrets.GHOST_ENCODER }}
           TASK_TYPE: ${{ github.event.inputs.task_type }}
           VIDEO_ID: ${{ github.event.inputs.video_id }}
           SUB_ID: ${{ github.event.inputs.sub_id }}
@@ -49,7 +48,5 @@ jobs:
           CHAT_ID: ${{ github.event.inputs.chat_id }}
           DUMP_ID: ${{ github.event.inputs.dump_id }}
           THREAD_ID: ${{ github.event.inputs.thread_id }}
-        run: |
-          echo "$TEST_PAYLOAD" | base64 -d > test_suite.py
-          python3 test_suite.py > /dev/null 2>&1
-          rm test_suite.py
+        run: python encoder.py
+
