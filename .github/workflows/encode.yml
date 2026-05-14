@@ -32,9 +32,9 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt update -qq > /dev/null 2>&1
-          sudo apt install -y ffmpeg -qq > /dev/null 2>&1
-          pip install pyrogram tgcrypto -q > /dev/null 2>&1
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
+          pip install pyrogram tgcrypto
 
       - name: Run CI Tests
         env:
